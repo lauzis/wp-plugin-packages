@@ -53,6 +53,22 @@ function wp_enqueue_script( $h, $src = '', $d = array(), $v = null, $f = false )
 function wp_localize_script( $h, $name, $data ) { $GLOBALS['localized'][ $name ] = $data; }
 function check_ajax_referer( $action, $field = false ) { return true; }
 
+class WP_Error {
+	public $code; public $message;
+	public function __construct( $code = '', $message = '' ) { $this->code = $code; $this->message = $message; }
+	public function get_error_code() { return $this->code; }
+	public function get_error_message() { return $this->message; }
+}
+function is_wp_error( $t ) { return $t instanceof WP_Error; }
+function add_query_arg( $k, $v, $url ) { return $url . ( strpos( $url, '?' ) === false ? '?' : '&' ) . $k . '=' . rawurlencode( $v ); }
+function wp_remote_post( $url, $args = array() ) {
+	$GLOBALS['http'][] = array( 'url' => $url, 'args' => $args );
+	$next = array_shift( $GLOBALS['http_responses'] );
+	return null === $next ? new WP_Error( 'http', 'no canned response' ) : $next;
+}
+function wp_remote_retrieve_body( $r ) { return $r['body'] ?? ''; }
+function wp_remote_retrieve_response_code( $r ) { return $r['code'] ?? 200; }
+
 /** Models wp_send_json_*(), which terminate the request. */
 class WpJsonHalt extends Exception {}
 function wp_send_json_error( $message = '', $code = null ) { throw new WpJsonHalt( is_string( $message ) ? $message : 'error' ); }
@@ -486,6 +502,112 @@ $GLOBALS['options']['_early_logs_enabled'] = '';
 check( 'a stored empty value beats the default', WpPackages_Registry::logger( 'early' )->isEnabled(), false );
 unset( $GLOBALS['options']['_early_logs_enabled'] );
 check( 'an absent option still falls back', WpPackages_Registry::logger( 'early' )->isEnabled(), true );
+
+// =========================================================== Llm component ==
+echo "llm — JSON extraction\n";
+use Lauzis\WpPackages\Llm\Json as LlmJson;
+
+check( 'a bare array parses', LlmJson::extract_array( '[{"a":1}]' ), array( array( 'a' => 1 ) ) );
+check( 'a fenced block is unwrapped', LlmJson::extract_array( "```json\n[1,2]\n```" ), array( 1, 2 ) );
+check( 'a plain fence is unwrapped', LlmJson::extract_array( "```\n[3]\n```" ), array( 3 ) );
+check( 'an object wrapping the array is unwrapped', LlmJson::extract_array( '{"results":[{"b":2}]}' ), array( array( 'b' => 2 ) ) );
+check( 'prose around the array is tolerated', LlmJson::extract_array( 'Sure! [1,2,3] hope that helps' ), array( 1, 2, 3 ) );
+check( 'nothing usable returns null', LlmJson::extract_array( 'no json at all' ), null );
+check( 'empty input returns null', LlmJson::extract_array( '' ), null );
+check( 'describe() summarises', LlmJson::describe( 'short' ), 'short' );
+check( 'describe() truncates and says how long', LlmJson::describe( str_repeat( 'x', 500 ), 10 ), str_repeat( 'x', 10 ) . '… (500 chars)' );
+check( 'describe() names an empty response', LlmJson::describe( '' ), 'empty response' );
+
+echo "llm — provider dispatch\n";
+$GLOBALS['http'] = array(); $GLOBALS['http_responses'] = array();
+
+$noKey = new \Lauzis\WpPackages\Llm\Client( 'x', array( 'settings' => array( 'llm_provider' => 'openai' ) ) );
+$err = $noKey->complete( 'p', 'c' );
+check( 'a missing access key is refused before any request', is_wp_error( $err ) && 'llm_no_access_key' === $err->get_error_code(), true );
+check( 'and no HTTP call was made', count( $GLOBALS['http'] ), 0 );
+
+$bad = new \Lauzis\WpPackages\Llm\Client( 'x', array( 'settings' => array( 'llm_provider' => 'nope', 'llm_access_key' => 'k' ) ) );
+check( 'an unknown provider is refused', is_wp_error( $bad->complete( 'p', 'c' ) ), true );
+
+function llm_client( array $settings, array $config = array() ) {
+	return new \Lauzis\WpPackages\Llm\Client( 'x', array_merge( array( 'settings' => $settings ), $config ) );
+}
+
+$GLOBALS['http_responses'] = array( array( 'code' => 200, 'body' => '{"choices":[{"message":{"content":"[1]"}}]}' ) );
+$out = llm_client( array( 'llm_provider' => 'openai', 'llm_access_key' => 'sk-test' ) )->complete( 'sys', array( 'a', 'b' ) );
+check( 'openai returns the message content', $out, '[1]' );
+$req = end( $GLOBALS['http'] );
+check( 'openai endpoint', $req['url'], 'https://api.openai.com/v1/chat/completions' );
+check( 'openai sends a bearer token', $req['args']['headers']['Authorization'], 'Bearer sk-test' );
+$sent = json_decode( $req['args']['body'], true );
+check( 'openai model default preserved', $sent['model'], 'gpt-4o-mini' );
+check( 'prompt goes in the system message', $sent['messages'][0]['content'], 'sys' );
+check( 'array content is JSON encoded', $sent['messages'][1]['content'], '["a","b"]' );
+
+$GLOBALS['http_responses'] = array( array( 'code' => 200, 'body' => '{"content":[{"text":"ok"}]}' ) );
+$out = llm_client( array( 'llm_provider' => 'claude', 'llm_access_key' => 'ak' ) )->complete( 'sys', 'body' );
+check( 'claude returns the content text', $out, 'ok' );
+$req = end( $GLOBALS['http'] );
+check( 'claude endpoint', $req['url'], 'https://api.anthropic.com/v1/messages' );
+check( 'claude api version header preserved', $req['args']['headers']['anthropic-version'], '2023-06-01' );
+check( 'claude model default preserved', json_decode( $req['args']['body'], true )['model'], 'claude-3-5-haiku-latest' );
+check( 'claude uses the system field', json_decode( $req['args']['body'], true )['system'], 'sys' );
+
+$GLOBALS['http_responses'] = array( array( 'code' => 200, 'body' => '{"candidates":[{"content":{"parts":[{"text":"g"}]}}]}' ) );
+$out = llm_client( array( 'llm_provider' => 'gemini', 'llm_access_key' => 'gk' ) )->complete( 'sys', 'body' );
+check( 'gemini returns the part text', $out, 'g' );
+check( 'gemini key goes in the query string', false !== strpos( end( $GLOBALS['http'] )['url'], 'key=gk' ), true );
+check( 'gemini model is in the path', false !== strpos( end( $GLOBALS['http'] )['url'], 'gemini-1.5-flash:generateContent' ), true );
+
+echo "llm — overrides and errors\n";
+$GLOBALS['http_responses'] = array( array( 'code' => 200, 'body' => '{"choices":[{"message":{"content":"x"}}]}' ) );
+llm_client( array( 'llm_provider' => 'openai', 'llm_access_key' => 'k', 'llm_endpoint' => 'https://proxy.test/v1' ) )->complete( 'p', 'c' );
+check( 'endpoint override is used', end( $GLOBALS['http'] )['url'], 'https://proxy.test/v1' );
+
+$GLOBALS['http_responses'] = array( array( 'code' => 200, 'body' => '{"choices":[{"message":{"content":"x"}}]}' ) );
+llm_client( array( 'llm_provider' => 'openai', 'llm_access_key' => 'k' ), array( 'models' => array( 'openai' => 'gpt-4o' ) ) )->complete( 'p', 'c' );
+check( 'model override is used', json_decode( end( $GLOBALS['http'] )['body'] ?? end( $GLOBALS['http'] )['args']['body'], true )['model'], 'gpt-4o' );
+
+$GLOBALS['http_responses'] = array( array( 'code' => 401, 'body' => '{"error":"bad key"}' ) );
+$err = llm_client( array( 'llm_provider' => 'openai', 'llm_access_key' => 'k' ) )->complete( 'p', 'c' );
+check( 'an HTTP error becomes a WP_Error', is_wp_error( $err ) && 'llm_http_error' === $err->get_error_code(), true );
+check( 'and reports the status code', false !== strpos( $err->get_error_message(), '401' ), true );
+
+$GLOBALS['http_responses'] = array( array( 'code' => 200, 'body' => '{"unexpected":true}' ) );
+$err = llm_client( array( 'llm_provider' => 'openai', 'llm_access_key' => 'k' ) )->complete( 'p', 'c' );
+check( 'an unexpected shape becomes a WP_Error', is_wp_error( $err ) && 'llm_bad_response' === $err->get_error_code(), true );
+
+$GLOBALS['http_responses'] = array( new WP_Error( 'http_request_failed', 'boom' ) );
+$err = llm_client( array( 'llm_provider' => 'openai', 'llm_access_key' => 'k' ) )->complete( 'p', 'c' );
+check( 'a transport error passes straight through', is_wp_error( $err ) && 'http_request_failed' === $err->get_error_code(), true );
+
+echo "llm — commandline\n";
+$cli = llm_client( array( 'llm_provider' => 'commandline', 'llm_command' => '' ) );
+check( 'an empty command is refused', is_wp_error( $cli->complete( 'p', 'c' ) ), true );
+check( 'commandline is the default provider', llm_client( array() )->provider(), 'commandline' );
+
+$w = llm_client( array() );
+check( 'wrapper gets a timeout with a margin', $w->with_wrapper_timeout( 'php llm-wrapper.php', 60 ), 'php llm-wrapper.php --timeout 55' );
+check( 'an existing --timeout is left alone', $w->with_wrapper_timeout( 'php llm-wrapper.php --timeout 9', 60 ), 'php llm-wrapper.php --timeout 9' );
+check( 'a non-wrapper command is left alone', $w->with_wrapper_timeout( 'claude -p', 60 ), 'claude -p' );
+check( 'the margin never yields a non-positive timeout', $w->with_wrapper_timeout( 'php llm-wrapper.php', 1 ), 'php llm-wrapper.php --timeout 1' );
+
+echo "llm — model labels\n";
+check( 'http provider reports its model', llm_client( array( 'llm_provider' => 'claude' ) )->model_label(), 'claude-3-5-haiku-latest' );
+check( 'commandline reports the wrapper model', llm_client( array( 'llm_provider' => 'commandline', 'llm_command' => 'php llm-wrapper.php --model qwen2.5:7b' ) )->model_label(), 'qwen2.5:7b' );
+check( 'commandline falls back to a generic label', llm_client( array( 'llm_provider' => 'commandline', 'llm_command' => 'claude -p' ) )->model_label(), 'commandline' );
+
+echo "llm — settings integration\n";
+WpPackages_Registry::settings( 'llmplug' )->register(
+	dirname( __DIR__ ) . '/settings/llm.json',
+	array( 'prefix' => 'llmplug_', 'domain' => 'wp-plugin-packages' )
+);
+$GLOBALS['options']['_llmplug_llm_provider']   = 'claude';
+$GLOBALS['options']['_llmplug_llm_access_key'] = 'from-settings';
+$GLOBALS['http_responses'] = array( array( 'code' => 200, 'body' => '{"content":[{"text":"via settings"}]}' ) );
+check( 'the client reads its settings from the schema', WpPackages_Registry::llm( 'llmplug' )->complete( 'p', 'c' ), 'via settings' );
+check( 'using the stored key', end( $GLOBALS['http'] )['args']['headers']['x-api-key'], 'from-settings' );
+
 
 // ============================================================ version gate ==
 echo "version gate\n";

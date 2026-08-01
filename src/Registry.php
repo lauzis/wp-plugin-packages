@@ -110,6 +110,17 @@ class WpPackages_Registry {
 	}
 
 	/**
+	 * Returns the LLM client for a plugin, creating it on first use.
+	 *
+	 * @param string $slug   Plugin slug.
+	 * @param array  $config See Lauzis\WpPackages\Llm\Client::__construct().
+	 * @return \Lauzis\WpPackages\Llm\Client
+	 */
+	public static function llm( $slug, array $config = array() ) {
+		return self::instance( 'llm', $slug, $config, '\Lauzis\WpPackages\Llm\Client' );
+	}
+
+	/**
 	 * Absolute path to a schema file shipped by this package.
 	 *
 	 * Resolved against the winning copy, so the schema always matches the code
