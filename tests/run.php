@@ -592,6 +592,13 @@ check( 'an existing --timeout is left alone', $w->with_wrapper_timeout( 'php llm
 check( 'a non-wrapper command is left alone', $w->with_wrapper_timeout( 'claude -p', 60 ), 'claude -p' );
 check( 'the margin never yields a non-positive timeout', $w->with_wrapper_timeout( 'php llm-wrapper.php', 1 ), 'php llm-wrapper.php --timeout 1' );
 
+// The JSON argument is a contract with the user's own script, so a plugin with
+// scripts already deployed can keep its key name.
+$r = new ReflectionClass( '\Lauzis\WpPackages\Llm\Client' );
+$prop = $r->getProperty( 'payload_key' ); $prop->setAccessible( true );
+check( 'payload key defaults to content', $prop->getValue( llm_client( array() ) ), 'content' );
+check( 'and is configurable', $prop->getValue( llm_client( array(), array( 'payload_key' => 'sentences' ) ) ), 'sentences' );
+
 echo "llm — model labels\n";
 check( 'http provider reports its model', llm_client( array( 'llm_provider' => 'claude' ) )->model_label(), 'claude-3-5-haiku-latest' );
 check( 'commandline reports the wrapper model', llm_client( array( 'llm_provider' => 'commandline', 'llm_command' => 'php llm-wrapper.php --model qwen2.5:7b' ) )->model_label(), 'qwen2.5:7b' );

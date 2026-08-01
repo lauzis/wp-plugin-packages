@@ -37,6 +37,9 @@ class Client {
 	/** @var int Request timeout in seconds for HTTP providers. */
 	private $timeout;
 
+	/** @var string Key the content is sent under to a commandline provider. */
+	private $payload_key;
+
 	/**
 	 * @param string $slug   Plugin slug, used to reach its settings page.
 	 * @param array  $config {
@@ -44,12 +47,20 @@ class Client {
 	 *                           Mainly for tests and one-off overrides.
 	 *     @type array $models   Provider => model id, overriding the defaults.
 	 *     @type int   $timeout  HTTP request timeout in seconds. Default 60.
+	 *     @type string $payload_key Key the content is sent under in the JSON
+	 *                           argument given to a commandline provider.
+	 *                           Default 'content'.
 	 * }
 	 */
 	public function __construct( $slug, array $config = array() ) {
 		$this->slug     = $slug;
 		$this->settings = isset( $config['settings'] ) ? $config['settings'] : array();
 		$this->timeout  = isset( $config['timeout'] ) ? (int) $config['timeout'] : 60;
+
+		// The JSON argument handed to a command is a contract with whatever
+		// script the user has configured. A plugin that already has scripts in
+		// the wild names its own key rather than breaking them.
+		$this->payload_key = isset( $config['payload_key'] ) ? $config['payload_key'] : 'content';
 
 		// Defaults carried over verbatim from splecheh, which is where this code
 		// came from. Override per plugin rather than editing them here.
@@ -232,7 +243,9 @@ class Client {
 
 		$timeout = (float) $this->setting( 'llm_timeout', 60 );
 		$command = $this->with_wrapper_timeout( $command, $timeout );
-		$payload = (string) wp_json_encode( array_merge( $context, array( 'prompt' => $prompt, 'content' => $content ) ) );
+		$payload = (string) wp_json_encode(
+			array_merge( $context, array( 'prompt' => $prompt, $this->payload_key => $content ) )
+		);
 
 		try {
 			$process = \Symfony\Component\Process\Process::fromShellCommandline( $command . ' ' . escapeshellarg( $payload ) );
