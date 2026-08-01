@@ -1,6 +1,7 @@
 # Plan — JSON settings schema
 
-Status: **design agreed, not started.** Living document; update as decisions land.
+Status: **phases 1–3 done** (package v1.2.0, splecheh converted). Phases 4–6
+remain. Living document; update as decisions land.
 
 ## Goal
 
@@ -140,6 +141,21 @@ Three of these need care:
 
 `html` fields carry markup in a translated string; they need the same
 `wp_kses_post` treatment on output that the notices component already uses.
+Where the markup is generated rather than literal, `"html": "@callback:name"`
+passes the *callable* to Carbon Fields so it renders at display time — splecheh's
+interpunction test field embeds a nonce and depends on this.
+
+Two more requirements emerged while converting splecheh for real:
+
+5. **`defaults` per fragment.** A component ships one default, but a plugin may
+   need a different one. splecheh's logging has always defaulted to on, so
+   adopting the shared field had to preserve that rather than quietly turning it
+   off for new installs. `register()` takes `defaults` for this.
+
+6. **`help_text_args`.** splecheh builds one help string with `sprintf()` from
+   the detected locale. Keeping the sentence a literal in the schema and passing
+   the value as an argument means the string stays translatable — a
+   `@callback:` on the whole help text would not be.
 
 ## Worked example — splecheh after conversion
 
@@ -413,12 +429,16 @@ Mitigations:
 
 ```mermaid
 flowchart LR
-    P1["1 · Schema loader<br/>+ JSON→CF adapter<br/>in the package"]
-    P2["2 · splecheh converts<br/>its own settings to JSON<br/><i>no data migration</i>"]
-    P3["3 · Logs ships settings/logs.json<br/>splecheh + rest-in-sync consume it"]
+    P1["✅ 1 · Schema loader<br/>+ JSON→CF adapter<br/>package v1.1.0"]
+    P2["✅ 2 · splecheh converts<br/>its own settings to JSON<br/><i>no data migration</i>"]
+    P3["🔶 3 · Logs ships settings/logs.json<br/>splecheh consumes it<br/><i>rest-in-sync still to do</i>"]
     P4["4 · rest-in-sync converts<br/><i>hard case: 12 conditionals,<br/>2 callbacks</i>"]
     P5["5 · mawiblah → Carbon Fields<br/><i>+ 12-key data migration</i>"]
     P6["6 · Facades drop 'enabled';<br/>components read their own settings"]
+
+    style P1 fill:#d4edda,stroke:#28a745
+    style P2 fill:#d4edda,stroke:#28a745
+    style P3 fill:#fff3cd,stroke:#ffc107
     P1 --> P2 --> P3 --> P4 --> P5 --> P6
 ```
 
