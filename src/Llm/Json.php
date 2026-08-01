@@ -90,6 +90,12 @@ class Json {
 	 * @return bool
 	 */
 	private static function is_list( array $array ) {
+		// An empty array is a list. range( 0, -1 ) counts downwards and yields
+		// [0, -1], so the naive comparison would reject it.
+		if ( array() === $array ) {
+			return true;
+		}
+
 		return array_keys( $array ) === range( 0, count( $array ) - 1 );
 	}
 }

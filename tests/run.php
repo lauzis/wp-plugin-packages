@@ -512,6 +512,7 @@ check( 'a fenced block is unwrapped', LlmJson::extract_array( "```json\n[1,2]\n`
 check( 'a plain fence is unwrapped', LlmJson::extract_array( "```\n[3]\n```" ), array( 3 ) );
 check( 'an object wrapping the array is unwrapped', LlmJson::extract_array( '{"results":[{"b":2}]}' ), array( array( 'b' => 2 ) ) );
 check( 'prose around the array is tolerated', LlmJson::extract_array( 'Sure! [1,2,3] hope that helps' ), array( 1, 2, 3 ) );
+check( 'an empty array is a valid result', LlmJson::extract_array( '[]' ), array() );
 check( 'nothing usable returns null', LlmJson::extract_array( 'no json at all' ), null );
 check( 'empty input returns null', LlmJson::extract_array( '' ), null );
 check( 'describe() summarises', LlmJson::describe( 'short' ), 'short' );
