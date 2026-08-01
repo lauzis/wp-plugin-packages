@@ -449,6 +449,29 @@ check( 'and it renders when invoked', call_user_func( $sc->find( 'sp_widget' )->
 check( 'a missing html callback leaves the field empty', $sc->find( 'sp_orphan' )->html, null );
 
 
+echo "logs — reading its own setting\n";
+$auto = WpPackages_Registry::logger( 'autolog' );
+check( 'no setting registered means off', $auto->isEnabled(), false );
+
+WpPackages_Registry::settings( 'autolog' )->register(
+    dirname( __DIR__ ) . '/settings/logs.json',
+    array( 'prefix' => 'autolog_', 'domain' => 'wp-plugin-packages' )
+);
+$GLOBALS['options']['_autolog_logs_enabled'] = '1';
+check( 'reads logs_enabled from its own schema', $auto->isEnabled(), true );
+$GLOBALS['options']['_autolog_logs_enabled'] = '';
+check( 'and follows it being switched off', $auto->isEnabled(), false );
+
+// A plugin that mapped the field onto a legacy key still resolves by bare id.
+WpPackages_Registry::settings( 'mapped' )->register(
+    dirname( __DIR__ ) . '/settings/logs.json',
+    array( 'prefix' => 'ris_', 'domain' => 'wp-plugin-packages', 'map' => array( 'logs_enabled' => 'enable_logging' ) )
+);
+$GLOBALS['options']['_ris_enable_logging'] = '1';
+check( 'a mapped field is still found by its bare id', WpPackages_Registry::logger( 'mapped' )->isEnabled(), true );
+
+check( 'an explicit enabled config still wins', WpPackages_Registry::logger( 'explicit', array( 'enabled' => true ) )->isEnabled(), true );
+
 // ============================================================ version gate ==
 echo "version gate\n";
 check( 'components share one registry', WpPackages_Registry::logger( 'demo' ) === $log, true );

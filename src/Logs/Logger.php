@@ -35,13 +35,15 @@ class Logger {
 	 *                                   to uploads/{slug}-logs/.
 	 *     @type callable|bool $enabled  Whether logging is on. A callable is
 	 *                                   resolved per call, so a settings change
-	 *                                   takes effect immediately. Default false.
+	 *                                   takes effect immediately. Omit it and the
+	 *                                   component reads its own 'logs_enabled'
+	 *                                   setting from the plugin's settings page.
 	 *     @type string        $channel  Default channel name. Defaults to $slug.
 	 * }
 	 */
 	public function __construct( $slug, array $config = array() ) {
 		$this->slug            = $this->sanitize_channel( $slug );
-		$this->enabled         = isset( $config['enabled'] ) ? $config['enabled'] : false;
+		$this->enabled         = isset( $config['enabled'] ) ? $config['enabled'] : null;
 		$this->default_channel = isset( $config['channel'] ) ? $this->sanitize_channel( $config['channel'] ) : $this->slug;
 
 		if ( isset( $config['dir'] ) ) {
@@ -52,8 +54,24 @@ class Logger {
 		}
 	}
 
-	/** Returns true when logging is currently switched on. */
+	/**
+	 * Returns true when logging is currently switched on.
+	 *
+	 * With no explicit 'enabled' config the component reads the 'logs_enabled'
+	 * field from its own schema, so a plugin that registers settings/logs.json
+	 * does not have to wire the setting through by hand. The bare id is used,
+	 * so this still works for a plugin that mapped the field onto a legacy
+	 * option key.
+	 */
 	public function isEnabled() {
+		if ( null === $this->enabled ) {
+			if ( ! class_exists( 'WpPackages_Registry' ) ) {
+				return false;
+			}
+
+			return (bool) \WpPackages_Registry::settings( $this->slug )->get( 'logs_enabled', false );
+		}
+
 		return is_callable( $this->enabled ) ? (bool) call_user_func( $this->enabled ) : (bool) $this->enabled;
 	}
 
