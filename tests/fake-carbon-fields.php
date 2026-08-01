@@ -16,6 +16,7 @@ namespace Carbon_Fields {
 		public $title;
 		public $page_parent = null;
 		public $page_file   = null;
+		public $page_menu_title = null;
 		/** @var array[] list of ['title' => string, 'fields' => Field[]] */
 		public $tabs = array();
 		/** @var Field[] */
@@ -34,6 +35,7 @@ namespace Carbon_Fields {
 
 		public function set_page_parent( $p ) { $this->page_parent = $p; return $this; }
 		public function set_page_file( $p )   { $this->page_file = $p;   return $this; }
+		public function set_page_menu_title( $t ) { $this->page_menu_title = $t; return $this; }
 
 		public function add_tab( $title, $fields ) {
 			$this->tabs[] = array( 'title' => $title, 'fields' => $fields );
@@ -89,6 +91,7 @@ namespace Carbon_Fields {
 		public $default_value     = null;
 		public $attributes        = array();
 		public $conditional_logic = null;
+		public $required          = false;
 		/** @var Field[] */
 		public $children = array();
 
@@ -106,6 +109,7 @@ namespace Carbon_Fields {
 		public function set_options( $o )           { $this->options = $o;           return $this; }
 		public function set_default_value( $v )     { $this->default_value = $v;     return $this; }
 		public function set_conditional_logic( $c ) { $this->conditional_logic = $c; return $this; }
+		public function set_required( $r )          { $this->required = $r;          return $this; }
 
 		public function set_attribute( $n, $v ) {
 			$this->attributes[ $n ] = $v;

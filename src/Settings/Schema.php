@@ -25,6 +25,9 @@ class Schema {
 	 *     @type string $domain Text domain for this fragment's strings.
 	 *     @type array  $map    Bare id => replacement id, applied before the
 	 *                          prefix, for fields that must keep a legacy key.
+	 *     @type array  $conditions Bare id => conditional_logic rules, applied to
+	 *                          a fragment's field. Lets a plugin hide a component
+	 *                          field in contexts the component knows nothing about.
 	 *     @type array  $defaults Bare id => default value, overriding the
 	 *                          schema's own default. Lets a component ship a
 	 *                          neutral default while a plugin keeps the one its
@@ -62,7 +65,8 @@ class Schema {
 		$prefix = isset( $args['prefix'] ) ? $args['prefix'] : '';
 		$domain = isset( $args['domain'] ) ? $args['domain'] : 'default';
 		$map      = isset( $args['map'] ) ? $args['map'] : array();
-		$defaults = isset( $args['defaults'] ) ? $args['defaults'] : array();
+		$defaults   = isset( $args['defaults'] ) ? $args['defaults'] : array();
+		$conditions = isset( $args['conditions'] ) ? $args['conditions'] : array();
 
 		if ( isset( $raw['sections'] ) ) {
 			$sections = $raw['sections'];
@@ -80,7 +84,7 @@ class Schema {
 			$fields = array();
 
 			foreach ( isset( $section['fields'] ) ? $section['fields'] : array() as $field ) {
-				$fields[] = self::normalize_field( $field, $prefix, $map, $domain, $defaults );
+				$fields[] = self::normalize_field( $field, $prefix, $map, $domain, $defaults, $conditions );
 			}
 
 			$result[] = array(
@@ -109,7 +113,7 @@ class Schema {
 	 * @param string $domain
 	 * @return array
 	 */
-	private static function normalize_field( array $field, $prefix, array $map, $domain, array $defaults = array() ) {
+	private static function normalize_field( array $field, $prefix, array $map, $domain, array $defaults = array(), array $conditions = array() ) {
 		$bare = isset( $field['id'] ) ? $field['id'] : '';
 
 		$normalized = array(
@@ -120,7 +124,7 @@ class Schema {
 			'domain' => $domain,
 		);
 
-		foreach ( array( 'help_text', 'help_text_args', 'html', 'default_value', 'options', 'attributes', 'width' ) as $key ) {
+		foreach ( array( 'help_text', 'help_text_args', 'html', 'default_value', 'options', 'attributes', 'width', 'required' ) as $key ) {
 			if ( isset( $field[ $key ] ) ) {
 				$normalized[ $key ] = $field[ $key ];
 			}
@@ -133,10 +137,12 @@ class Schema {
 		// A condition names another field by its bare id, so it has to go
 		// through the same mapping and prefixing or it will point at an id that
 		// no longer exists.
-		if ( ! empty( $field['conditional_logic'] ) ) {
+		$logic = isset( $conditions[ $bare ] ) ? $conditions[ $bare ] : ( isset( $field['conditional_logic'] ) ? $field['conditional_logic'] : array() );
+
+		if ( ! empty( $logic ) ) {
 			$rules = array();
 
-			foreach ( $field['conditional_logic'] as $rule ) {
+			foreach ( $logic as $rule ) {
 				if ( isset( $rule['field'] ) ) {
 					$rule['field'] = $prefix . self::resolve_id( $rule['field'], $map );
 				}
@@ -155,7 +161,7 @@ class Schema {
 			$children = array();
 
 			foreach ( $field['fields'] as $child ) {
-				$children[] = self::normalize_field( $child, '', array(), $domain, array() );
+				$children[] = self::normalize_field( $child, '', array(), $domain, array(), array() );
 			}
 
 			$normalized['fields'] = $children;

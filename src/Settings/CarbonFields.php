@@ -41,6 +41,10 @@ class CarbonFields {
 			$page->set_page_file( $container['page_file'] );
 		}
 
+		if ( ! empty( $container['page_menu_title'] ) ) {
+			$page->set_page_menu_title( $container['page_menu_title'] );
+		}
+
 		if ( 'tabs' === $mode ) {
 			foreach ( $sections as $section ) {
 				$page->add_tab( $this->text( $section['title'], $section['domain'] ), $this->fields( $section ) );
@@ -156,6 +160,10 @@ class CarbonFields {
 			foreach ( $field['attributes'] as $name => $value ) {
 				$made->set_attribute( $name, $value );
 			}
+		}
+
+		if ( ! empty( $field['required'] ) ) {
+			$made->set_required( true );
 		}
 
 		if ( ! empty( $field['conditional_logic'] ) ) {

@@ -51,7 +51,7 @@ class Settings {
 
 		$this->container = array_intersect_key(
 			$config,
-			array_flip( array( 'page_parent', 'page_file' ) )
+			array_flip( array( 'page_parent', 'page_file', 'page_menu_title' ) )
 		);
 	}
 
