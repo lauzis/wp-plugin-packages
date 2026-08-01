@@ -409,6 +409,7 @@ echo "settings — reading values\n";
 $GLOBALS['options']['_demo_logs_enabled'] = '1';
 check( 'get() resolves prefix and reads storage', $s->get( 'logs_enabled' ), '1' );
 check( 'get() falls back to the schema default first', $s->get( 'batch_size' ), '50' );
+check( 'default_for() exposes the schema default', $s->default_for( 'batch_size' ), '50' );
 check( 'then to the caller default when the schema has none', $s->get( 'language', 'fallback' ), 'lv' );
 check( 'and to the caller default when neither exists', $s->get( 'command', 'none' ), 'none' );
 check( 'get() returns default for unknown ids', $s->get( 'no_such_field', 'x' ), 'x' );
@@ -479,8 +480,12 @@ WpPackages_Registry::settings( 'early' )->register(
     dirname( __DIR__ ) . '/settings/logs.json',
     array( 'prefix' => 'early_', 'domain' => 'wp-plugin-packages' )
 );
+// An unchecked checkbox stores an empty string; that is a real answer and must
+// not be overridden by the default.
 $GLOBALS['options']['_early_logs_enabled'] = '';
-check( 'once registered, the stored value wins over it', WpPackages_Registry::logger( 'early' )->isEnabled(), false );
+check( 'a stored empty value beats the default', WpPackages_Registry::logger( 'early' )->isEnabled(), false );
+unset( $GLOBALS['options']['_early_logs_enabled'] );
+check( 'an absent option still falls back', WpPackages_Registry::logger( 'early' )->isEnabled(), true );
 
 // ============================================================ version gate ==
 echo "version gate\n";
