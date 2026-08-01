@@ -460,3 +460,44 @@ format's stress test.
   component is plausible.
 - Do gawg and yolsa adopt the logging component at the same time, or is that a
   separate decision once the settings work lands?
+
+
+---
+
+# Candidate — shared LLM integration
+
+Investigated, not started. Recorded so the findings are not lost.
+
+Three consumers, in very different states:
+
+| plugin | today |
+| --- | --- |
+| **splecheh** | Working multi-provider backend: `InterpunctionBackend` (623 lines) dispatches to openai / claude / gemini / commandline, plus `tools/llm-wrapper.php` (413 lines) for local models via ollama. Handles chunking, timeouts, JSON-array response parsing and error description. |
+| **yolsa** | Separate, OpenAI-only, and reportedly not working: `ChatGptApi` (261 lines) uses the Assistants API — assistant/thread/message endpoints — with its own curl and its own settings keys. Shares no code with splecheh. |
+| **poly-9000** | Empty scaffold. "LLM translation plugin for WordPress" — one commit, LICENSE and README only. |
+
+poly-9000 being empty is the argument for doing this sooner rather than later:
+it can be built on the component instead of growing a third implementation to
+reconcile afterwards.
+
+**What looks genuinely shared** — provider selection and credentials, endpoint
+overrides, model choice, timeouts, chunking, the request/retry mechanics, JSON
+response extraction and the error taxonomy. splecheh already has all of it in a
+provider-agnostic shape.
+
+**What stays per-plugin** — the prompt, the response schema each plugin expects,
+and what it does with the result. splecheh wants
+`{original, fixed, explanation}` per sentence; poly-9000 will want translations;
+yolsa wants a meta description.
+
+**Settings overlap directly with the work above**: provider, access key,
+endpoint, model and timeout are exactly the fields splecheh now declares in
+`config/settings.json`. An `llm` component would ship its own `settings/llm.json`
+the same way `logs.json` does, which is the pattern this plan already
+establishes.
+
+**Open question** — yolsa uses the OpenAI Assistants API (stateful assistants and
+threads) while splecheh uses plain chat completions. Those are different enough
+that the component would need to either pick one or model both. Worth
+establishing why yolsa is broken first: if the Assistants approach is the reason,
+converging on completions may fix it as a side effect.
