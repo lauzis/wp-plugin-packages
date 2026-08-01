@@ -472,6 +472,16 @@ check( 'a mapped field is still found by its bare id', WpPackages_Registry::logg
 
 check( 'an explicit enabled config still wins', WpPackages_Registry::logger( 'explicit', array( 'enabled' => true ) )->isEnabled(), true );
 
+// Logging can happen before carbon_fields_register_fields has run, so a plugin
+// whose logging defaults to on must not report off in that window.
+check( 'enabled_default applies before the schema is registered', WpPackages_Registry::logger( 'early', array( 'enabled_default' => true ) )->isEnabled(), true );
+WpPackages_Registry::settings( 'early' )->register(
+    dirname( __DIR__ ) . '/settings/logs.json',
+    array( 'prefix' => 'early_', 'domain' => 'wp-plugin-packages' )
+);
+$GLOBALS['options']['_early_logs_enabled'] = '';
+check( 'once registered, the stored value wins over it', WpPackages_Registry::logger( 'early' )->isEnabled(), false );
+
 // ============================================================ version gate ==
 echo "version gate\n";
 check( 'components share one registry', WpPackages_Registry::logger( 'demo' ) === $log, true );

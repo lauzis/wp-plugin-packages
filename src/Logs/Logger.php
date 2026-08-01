@@ -22,8 +22,11 @@ class Logger {
 	/** @var string Absolute path to the log directory, with trailing slash. */
 	private $dir;
 
-	/** @var callable|bool */
+	/** @var callable|bool|null */
 	private $enabled;
+
+	/** @var bool Used when the schema has not been registered yet. */
+	private $enabled_default;
 
 	/** @var string */
 	private $default_channel;
@@ -38,12 +41,17 @@ class Logger {
 	 *                                   takes effect immediately. Omit it and the
 	 *                                   component reads its own 'logs_enabled'
 	 *                                   setting from the plugin's settings page.
+	 *     @type bool          $enabled_default Value to assume before the schema
+	 *                                   has been registered — logging can happen
+	 *                                   during bootstrap or cron, earlier than
+	 *                                   carbon_fields_register_fields. Default false.
 	 *     @type string        $channel  Default channel name. Defaults to $slug.
 	 * }
 	 */
 	public function __construct( $slug, array $config = array() ) {
 		$this->slug            = $this->sanitize_channel( $slug );
 		$this->enabled         = isset( $config['enabled'] ) ? $config['enabled'] : null;
+		$this->enabled_default = ! empty( $config['enabled_default'] );
 		$this->default_channel = isset( $config['channel'] ) ? $this->sanitize_channel( $config['channel'] ) : $this->slug;
 
 		if ( isset( $config['dir'] ) ) {
@@ -69,7 +77,7 @@ class Logger {
 				return false;
 			}
 
-			return (bool) \WpPackages_Registry::settings( $this->slug )->get( 'logs_enabled', false );
+			return (bool) \WpPackages_Registry::settings( $this->slug )->get( 'logs_enabled', $this->enabled_default );
 		}
 
 		return is_callable( $this->enabled ) ? (bool) call_user_func( $this->enabled ) : (bool) $this->enabled;
