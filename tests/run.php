@@ -408,7 +408,9 @@ check( 'separator carries the section title', $fc->fields[0]->label, 'Logging' )
 echo "settings — reading values\n";
 $GLOBALS['options']['_demo_logs_enabled'] = '1';
 check( 'get() resolves prefix and reads storage', $s->get( 'logs_enabled' ), '1' );
-check( 'get() falls back when unset', $s->get( 'language', 'fallback' ), 'fallback' );
+check( 'get() falls back to the schema default first', $s->get( 'batch_size' ), '50' );
+check( 'then to the caller default when the schema has none', $s->get( 'language', 'fallback' ), 'lv' );
+check( 'and to the caller default when neither exists', $s->get( 'command', 'none' ), 'none' );
 check( 'get() returns default for unknown ids', $s->get( 'no_such_field', 'x' ), 'x' );
 check( 'key() returns null for unknown ids', $s->key( 'no_such_field' ), null );
 

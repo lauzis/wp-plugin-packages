@@ -32,6 +32,9 @@ class Settings {
 	/** @var array<string, string> Bare id => final option key, for get(). */
 	private $keys = array();
 
+	/** @var array<string, mixed> Bare id => schema default, for get(). */
+	private $defaults = array();
+
 	/** @var bool */
 	private $rendered = false;
 
@@ -71,8 +74,14 @@ class Settings {
 
 		foreach ( $sections as $section ) {
 			foreach ( $section['fields'] as $field ) {
-				if ( '' !== $field['bare'] ) {
-					$this->keys[ $field['bare'] ] = $field['id'];
+				if ( '' === $field['bare'] ) {
+					continue;
+				}
+
+				$this->keys[ $field['bare'] ] = $field['id'];
+
+				if ( isset( $field['default_value'] ) ) {
+					$this->defaults[ $field['bare'] ] = $field['default_value'];
 				}
 			}
 		}
@@ -151,8 +160,12 @@ class Settings {
 	 * Reads a stored setting by its bare id, so callers never need to know the
 	 * prefix or whether a legacy key was mapped.
 	 *
+	 * Falls back to the schema's own default before the caller's, so a setting
+	 * the user has never saved still reads as the value the settings page shows.
+	 *
 	 * @param string $bare_id Id as written in the schema.
-	 * @param mixed  $default Returned when nothing is stored.
+	 * @param mixed  $default Returned when nothing is stored and the schema
+	 *                        declares no default.
 	 * @return mixed
 	 */
 	public function get( $bare_id, $default = null ) {
@@ -170,7 +183,19 @@ class Settings {
 			$value = get_option( '_' . $key, null );
 		}
 
-		return ( null === $value || '' === $value ) ? $default : $value;
+		if ( null !== $value && '' !== $value ) {
+			return $value;
+		}
+
+		if ( isset( $this->defaults[ $bare_id ] ) ) {
+			$fallback = $this->resolve( $this->defaults[ $bare_id ] );
+
+			if ( null !== $fallback ) {
+				return $fallback;
+			}
+		}
+
+		return $default;
 	}
 
 	/**
