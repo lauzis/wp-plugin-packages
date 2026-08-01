@@ -25,6 +25,10 @@ class Schema {
 	 *     @type string $domain Text domain for this fragment's strings.
 	 *     @type array  $map    Bare id => replacement id, applied before the
 	 *                          prefix, for fields that must keep a legacy key.
+	 *     @type array  $defaults Bare id => default value, overriding the
+	 *                          schema's own default. Lets a component ship a
+	 *                          neutral default while a plugin keeps the one its
+	 *                          users already have.
 	 * }
 	 * @return array[] Normalised sections.
 	 * @throws \RuntimeException When the file is missing or not valid JSON.
@@ -57,7 +61,8 @@ class Schema {
 	public static function normalize( array $raw, array $args = array() ) {
 		$prefix = isset( $args['prefix'] ) ? $args['prefix'] : '';
 		$domain = isset( $args['domain'] ) ? $args['domain'] : 'default';
-		$map    = isset( $args['map'] ) ? $args['map'] : array();
+		$map      = isset( $args['map'] ) ? $args['map'] : array();
+		$defaults = isset( $args['defaults'] ) ? $args['defaults'] : array();
 
 		if ( isset( $raw['sections'] ) ) {
 			$sections = $raw['sections'];
@@ -75,7 +80,7 @@ class Schema {
 			$fields = array();
 
 			foreach ( isset( $section['fields'] ) ? $section['fields'] : array() as $field ) {
-				$fields[] = self::normalize_field( $field, $prefix, $map, $domain );
+				$fields[] = self::normalize_field( $field, $prefix, $map, $domain, $defaults );
 			}
 
 			$result[] = array(
@@ -104,7 +109,7 @@ class Schema {
 	 * @param string $domain
 	 * @return array
 	 */
-	private static function normalize_field( array $field, $prefix, array $map, $domain ) {
+	private static function normalize_field( array $field, $prefix, array $map, $domain, array $defaults = array() ) {
 		$bare = isset( $field['id'] ) ? $field['id'] : '';
 
 		$normalized = array(
@@ -115,10 +120,14 @@ class Schema {
 			'domain' => $domain,
 		);
 
-		foreach ( array( 'help_text', 'html', 'default_value', 'options', 'attributes', 'width' ) as $key ) {
+		foreach ( array( 'help_text', 'help_text_args', 'html', 'default_value', 'options', 'attributes', 'width' ) as $key ) {
 			if ( isset( $field[ $key ] ) ) {
 				$normalized[ $key ] = $field[ $key ];
 			}
+		}
+
+		if ( array_key_exists( $bare, $defaults ) ) {
+			$normalized['default_value'] = $defaults[ $bare ];
 		}
 
 		// A condition names another field by its bare id, so it has to go
@@ -146,7 +155,7 @@ class Schema {
 			$children = array();
 
 			foreach ( $field['fields'] as $child ) {
-				$children[] = self::normalize_field( $child, '', array(), $domain );
+				$children[] = self::normalize_field( $child, '', array(), $domain, array() );
 			}
 
 			$normalized['fields'] = $children;

@@ -111,11 +111,27 @@ class CarbonFields {
 			: \Carbon_Fields\Field::make( $field['type'], $field['id'], $label );
 
 		if ( 'html' === $field['type'] && isset( $field['html'] ) ) {
-			$made->set_html( wp_kses_post( $this->text( $field['html'], $domain ) ) );
+			if ( Schema::is_callback( $field['html'] ) ) {
+				// Pass the callable itself rather than its result: Carbon Fields
+				// renders html fields at display time, so anything time-sensitive
+				// in the markup (a nonce, current state) stays correct.
+				$renderer = $this->settings->callable_for( Schema::callback_name( $field['html'] ) );
+
+				if ( $renderer ) {
+					$made->set_html( $renderer );
+				}
+			} else {
+				$made->set_html( wp_kses_post( $this->text( $field['html'], $domain ) ) );
+			}
 		}
 
 		if ( ! empty( $field['help_text'] ) ) {
-			$made->set_help_text( $this->text( $field['help_text'], $domain ) );
+			$made->set_help_text(
+				$this->format(
+					$this->text( $field['help_text'], $domain ),
+					isset( $field['help_text_args'] ) ? $field['help_text_args'] : array()
+				)
+			);
 		}
 
 		if ( isset( $field['options'] ) ) {
@@ -178,6 +194,31 @@ class CarbonFields {
 		}
 
 		return $translated;
+	}
+
+	/**
+	 * Applies sprintf arguments to an already-translated string.
+	 *
+	 * Keeps a string with a runtime value in it translatable: the sentence stays
+	 * a literal in the schema (so the i18n manifest picks it up) while the value
+	 * arrives through a callback.
+	 *
+	 * @param string $text
+	 * @param array  $args Literal values or "@callback:name" references.
+	 * @return string
+	 */
+	private function format( $text, array $args ) {
+		if ( empty( $args ) ) {
+			return $text;
+		}
+
+		$resolved = array();
+
+		foreach ( $args as $arg ) {
+			$resolved[] = $this->settings->resolve( $arg );
+		}
+
+		return vsprintf( $text, $resolved );
 	}
 
 	/**

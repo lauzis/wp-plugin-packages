@@ -419,6 +419,34 @@ check( 'literals pass through resolve()', $orphan->resolve( 'plain' ), 'plain' )
 check( 'render() is idempotent', ( $s->render() === $s ), true );
 
 
+echo "settings — defaults, sprintf args, html callbacks\n";
+$ov = new \Lauzis\WpPackages\Settings\Settings( 'ov', array( 'title' => 'Ov' ) );
+$ov->register( dirname( __DIR__ ) . '/settings/logs.json', array(
+    'prefix'   => 'ov_',
+    'domain'   => 'wp-plugin-packages',
+    'defaults' => array( 'logs_enabled' => true ),
+) );
+$ov->render();
+$oc = \Carbon_Fields\Container::$last;
+check( 'defaults override the schema value', $oc->find( 'ov_logs_enabled' )->default_value, true );
+
+$plain = new \Lauzis\WpPackages\Settings\Settings( 'plain', array( 'title' => 'Plain' ) );
+$plain->register( dirname( __DIR__ ) . '/settings/logs.json', array( 'prefix' => 'plain_' ) );
+$plain->render();
+check( 'without an override the schema default stands', \Carbon_Fields\Container::$last->find( 'plain_logs_enabled' )->default_value, null );
+
+$sp = new \Lauzis\WpPackages\Settings\Settings( 'sp', array( 'title' => 'Sp' ) );
+$sp->callback( 'locale', function () { return 'lv'; } );
+$sp->callback( 'test_field', function () { return '<p>rendered late</p>'; } );
+$sp->register( __DIR__ . '/fixtures/dynamic.json', array( 'prefix' => 'sp_', 'domain' => 'sp' ) );
+$sp->render();
+$sc = \Carbon_Fields\Container::$last;
+check( 'sprintf args fill the translated string', $sc->find( 'sp_language' )->help_text, 'Defaults to the site language (lv).' );
+check( 'html callback is passed as a callable, not its result', is_callable( $sc->find( 'sp_widget' )->html ), true );
+check( 'and it renders when invoked', call_user_func( $sc->find( 'sp_widget' )->html ), '<p>rendered late</p>' );
+check( 'a missing html callback leaves the field empty', $sc->find( 'sp_orphan' )->html, null );
+
+
 // ============================================================ version gate ==
 echo "version gate\n";
 check( 'components share one registry', WpPackages_Registry::logger( 'demo' ) === $log, true );

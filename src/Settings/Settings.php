@@ -117,6 +117,20 @@ class Settings {
 	}
 
 	/**
+	 * Returns a registered callback itself, rather than its result.
+	 *
+	 * Used where the consumer wants to invoke it later — Carbon Fields renders
+	 * html fields lazily, so passing the callable keeps output (and any nonce
+	 * in it) generated at display time rather than at registration time.
+	 *
+	 * @param string $name
+	 * @return callable|null
+	 */
+	public function callable_for( $name ) {
+		return isset( $this->callbacks[ $name ] ) ? $this->callbacks[ $name ] : null;
+	}
+
+	/**
 	 * Builds the settings page. Call on carbon_fields_register_fields.
 	 *
 	 * @return $this
