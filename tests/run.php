@@ -410,6 +410,13 @@ check( 'help text applied', $c->find( 'demo_post_types' )->help_text, 'Which pos
 check( 'callback default resolved', $c->find( 'demo_language' )->default_value, 'lv' );
 check( 'literal default kept', $c->find( 'demo_batch_size' )->default_value, '50' );
 check( 'attributes applied', $c->find( 'demo_batch_size' )->attributes, array( 'type' => 'number', 'min' => '1' ) );
+
+// Field-type-specific config, e.g. the wp_editor settings a rich_text field
+// takes. Passed straight through so the schema does not need to know about
+// every field type Carbon Fields offers.
+check( 'settings passed through', $c->find( 'demo_intro' )->settings, array( 'media_buttons' => false ) );
+check( 'no settings leaves it unset', $c->find( 'demo_batch_size' )->settings, null );
+check( 'a non-array settings value is ignored', $c->find( 'demo_language' )->settings, null );
 check( 'static options kept', $c->find( 'demo_mode' )->options, array( 'commandline' => 'Commandline', 'api' => 'Hosted API' ) );
 check( 'conditional logic applied', $c->find( 'demo_command' )->conditional_logic[0]['field'], 'demo_mode' );
 check( 'html field carries markup', $c->find( 'demo_notice' )->html, '<p>Careful.</p>' );
