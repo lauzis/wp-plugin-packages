@@ -183,6 +183,23 @@ Ids in a fragment are bare; the loader prefixes them so two plugins never share
 an option. `map` keeps a legacy key, `defaults` overrides a component's default,
 and `conditions` attaches conditional logic the component knows nothing about.
 
+A field's `type` is passed straight to `Field::make()`, so any Carbon Fields
+type works without the schema knowing about it. `settings` is passed on to the
+field's own `set_settings()` where it has one — a `rich_text` field takes
+`wp_editor` settings that way:
+
+```json
+{
+  "id": "email_body",
+  "type": "rich_text",
+  "title": "Email body",
+  "settings": { "media_buttons": false }
+}
+```
+
+It is ignored on types that do not accept it, so a typo cannot fatal the
+settings page.
+
 Values that cannot be JSON literals — dynamic option lists, dynamic defaults,
 generated html — use `"@callback:name"`, resolved against callbacks registered
 by name. Nothing in a schema is ever eval'd.
