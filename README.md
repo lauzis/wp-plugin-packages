@@ -183,6 +183,23 @@ Ids in a fragment are bare; the loader prefixes them so two plugins never share
 an option. `map` keeps a legacy key, `defaults` overrides a component's default,
 and `conditions` attaches conditional logic the component knows nothing about.
 
+A field's `type` is passed straight to `Field::make()`, so any Carbon Fields
+type works without the schema knowing about it. `settings` is passed on to the
+field's own `set_settings()` where it has one — a `rich_text` field takes
+`wp_editor` settings that way:
+
+```json
+{
+  "id": "email_body",
+  "type": "rich_text",
+  "title": "Email body",
+  "settings": { "media_buttons": false }
+}
+```
+
+It is ignored on types that do not accept it, so a typo cannot fatal the
+settings page.
+
 Values that cannot be JSON literals — dynamic option lists, dynamic defaults,
 generated html — use `"@callback:name"`, resolved against callbacks registered
 by name. Nothing in a schema is ever eval'd.
@@ -261,6 +278,38 @@ request works through a batch at a time.
 
 Concurrent requests are handled with a short-lived lock, so two page loads
 arriving together cannot both migrate.
+
+## Language
+
+Which language a site, a request, or a post is in. WordPress has no answer to
+this, so every plugin that needs to know writes the same cascade.
+
+```php
+Language::current();            // 'lv'  — the request
+Language::for_post( $id );      // 'fr'  — that post, wherever it is asked from
+Language::default_language();   // 'en'
+Language::available();          // ['en', 'lv']
+Language::is_multilingual();
+Language::source();             // 'wpml' | 'polylang' | 'filter' | 'none'
+Language::locale();             // 'lv_LV' — when the region matters
+```
+
+WPML and Polylang are handled directly. Anything else answers through
+`wp_packages_current_language` and `wp_packages_post_language` rather than by
+being added here: the list of translation plugins is not something this package
+can keep up with, and a site always knows better than a guess.
+
+Codes come back as the active plugin reports them — a bare `lv`. With no plugin
+the locale's language part is used, so `lv_LV` answers as `lv` and codes stay
+comparable either way.
+
+`for_post()` asks the plugin about the post rather than about the request. The
+two agree on an ordinary page view, but a post looked up from cron, REST or a
+sync has a language while the request has nothing meaningful to say.
+
+A registered filter that returns nothing is not treated as an answer — that is
+WPML before it has finished setting up, and it falls through to the locale
+rather than reporting no language at all.
 
 ## Assets
 

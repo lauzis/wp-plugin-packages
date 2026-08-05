@@ -58,6 +58,23 @@ function set_transient( $k, $v, $ttl = 0 ) { $GLOBALS['transients'][ $k ] = $v; 
 function delete_transient( $k ) { unset( $GLOBALS['transients'][ $k ] ); return true; }
 function wp_remote_retrieve_header( $r, $h ) { return $r['headers'][ $h ] ?? ''; }
 
+// Filters, enough of them for the components that use one.
+$GLOBALS['filters'] = array();
+function add_filter( $hook, $cb, $prio = 10, $args = 1 ) { $GLOBALS['filters'][ $hook ][] = $cb; }
+function has_filter( $hook, $cb = false ) { return ! empty( $GLOBALS['filters'][ $hook ] ); }
+function remove_all_filters( $hook ) { unset( $GLOBALS['filters'][ $hook ] ); }
+function apply_filters( $hook, $value ) {
+	$extra = array_slice( func_get_args(), 2 );
+	foreach ( $GLOBALS['filters'][ $hook ] ?? array() as $cb ) {
+		$value = call_user_func_array( $cb, array_merge( array( $value ), $extra ) );
+	}
+	return $value;
+}
+$GLOBALS['locale']      = 'en_US';
+$GLOBALS['site_locale'] = 'en_US';
+function determine_locale() { return $GLOBALS['locale']; }
+function get_locale() { return $GLOBALS['site_locale']; }
+
 class WP_Error {
 	public $code; public $message;
 	public function __construct( $code = '', $message = '' ) { $this->code = $code; $this->message = $message; }
@@ -100,6 +117,10 @@ function check( $label, $got, $want ) {
 	echo "  FAIL $label\n";
 	echo "         expected: " . var_export( $want, true ) . "\n";
 	echo "         actual:   " . var_export( $got, true ) . "\n";
+}
+
+function section( $title ) {
+	echo "\n$title\n";
 }
 
 function render( $notices ) {
@@ -410,6 +431,13 @@ check( 'help text applied', $c->find( 'demo_post_types' )->help_text, 'Which pos
 check( 'callback default resolved', $c->find( 'demo_language' )->default_value, 'lv' );
 check( 'literal default kept', $c->find( 'demo_batch_size' )->default_value, '50' );
 check( 'attributes applied', $c->find( 'demo_batch_size' )->attributes, array( 'type' => 'number', 'min' => '1' ) );
+
+// Field-type-specific config, e.g. the wp_editor settings a rich_text field
+// takes. Passed straight through so the schema does not need to know about
+// every field type Carbon Fields offers.
+check( 'settings passed through', $c->find( 'demo_intro' )->settings, array( 'media_buttons' => false ) );
+check( 'no settings leaves it unset', $c->find( 'demo_batch_size' )->settings, null );
+check( 'a non-array settings value is ignored', $c->find( 'demo_language' )->settings, null );
 check( 'static options kept', $c->find( 'demo_mode' )->options, array( 'commandline' => 'Commandline', 'api' => 'Hosted API' ) );
 check( 'conditional logic applied', $c->find( 'demo_command' )->conditional_logic[0]['field'], 'demo_mode' );
 check( 'html field carries markup', $c->find( 'demo_notice' )->html, '<p>Careful.</p>' );
@@ -771,11 +799,115 @@ check( 'Assets::VERSION is in step with it', \Lauzis\WpPackages\Notices\Assets::
 WpPackages_Registry::register( '0.9.0', '/nonexistent/older.php', '/nonexistent' );
 check( 'an older copy does not win', WpPackages_Registry::active_version(), $boot_version );
 
-WpPackages_Registry::register( '1.10.0', dirname( __DIR__ ) . '/src/load.php', '/newer' );
-check( 'version compare is semantic, not lexical', WpPackages_Registry::active_version(), '1.10.0' );
+// Derived from the real version rather than written out, so a release does not
+// quietly overtake the copy this test calls "newer".
+$newer = preg_replace_callback(
+	'/^(\d+)\.(\d+)/',
+	static function ( $m ) {
+		return $m[1] . '.' . ( (int) $m[2] + 1 );
+	},
+	$boot_version
+);
+
+WpPackages_Registry::register( $newer, dirname( __DIR__ ) . '/src/load.php', '/newer' );
+check( 'version compare is semantic, not lexical', WpPackages_Registry::active_version(), $newer );
 check( 'assets follow the winning copy', WpPackages_Registry::active_root(), '/newer' );
 
 exec( 'rm -rf ' . escapeshellarg( $base ) );
 
+// ---------------------------------------------------------------- Language --
+
+use Lauzis\WpPackages\I18n\Language;
+
+function lang_reset() {
+	$GLOBALS['filters']     = array();
+	$GLOBALS['locale']      = 'en_US';
+	$GLOBALS['site_locale'] = 'en_US';
+}
+
+section( 'Language: a site with no translation plugin' );
+lang_reset();
+$GLOBALS['locale'] = 'lv_LV';
+check( 'current comes from the locale', Language::current(), 'lv' );
+check( 'the region is dropped', Language::normalize( 'pt_BR' ), 'pt' );
+check( 'a hyphenated tag works too', Language::normalize( 'zh-Hant' ), 'zh' );
+check( 'locale is available in full', Language::locale(), 'lv_LV' );
+check( 'the current language resolves to it', Language::locale_for( 'lv' ), 'lv_LV' );
+check( 'source says none', Language::source(), 'none' );
+check( 'not multilingual', Language::is_multilingual(), false );
+check( 'available is the one language', Language::available(), array( 'lv' ) );
+check( 'a post falls back to the request', Language::for_post( 7 ), 'lv' );
+
+section( 'Language: WPML' );
+lang_reset();
+add_filter( 'wpml_current_language', function () { return 'de'; } );
+add_filter( 'wpml_default_language', function () { return 'en'; } );
+add_filter( 'wpml_post_language_details', function ( $v, $post_id ) {
+	return 42 === $post_id ? array( 'language_code' => 'fr' ) : null;
+} );
+add_filter( 'wpml_active_languages', function () {
+	return array(
+		'en' => array( 'language_code' => 'en', 'default_locale' => 'en_US' ),
+		'de' => array( 'language_code' => 'de', 'default_locale' => 'de_DE' ),
+	);
+} );
+check( "current is WPML's", Language::current(), 'de' );
+check( 'a post answers for itself', Language::for_post( 42 ), 'fr' );
+check( 'an untranslated post falls back', Language::for_post( 43 ), 'de' );
+check( 'default language', Language::default_language(), 'en' );
+check( 'available languages', Language::available(), array( 'en', 'de' ) );
+check( 'multilingual', Language::is_multilingual(), true );
+check( 'source says wpml', Language::source(), 'wpml' );
+check( 'a code resolves to its locale', Language::locale_for( 'de' ), 'de_DE' );
+check( 'and so does another', Language::locale_for( 'en' ), 'en_US' );
+check( 'an unknown code is returned as given', Language::locale_for( 'xx' ), 'xx' );
+
+section( 'Language: a plugin registered but not yet answering' );
+lang_reset();
+// What WPML does before it has finished setting up. A registered filter that
+// returns nothing must not be mistaken for an answer.
+add_filter( 'wpml_current_language', function () { return null; } );
+$GLOBALS['locale'] = 'es_ES';
+check( 'falls through to the locale', Language::current(), 'es' );
+
+section( 'Language: anything else answers through the filter' );
+lang_reset();
+add_filter( 'wp_packages_current_language', function () { return 'sv'; } );
+check( 'the filter decides', Language::current(), 'sv' );
+check( 'source says filter', Language::source(), 'filter' );
+lang_reset();
+add_filter( 'wp_packages_post_language', function ( $c, $id ) { return 'no'; } );
+check( 'a post can be overridden', Language::for_post( 5 ), 'no' );
+
+// Declared inside a conditional so PHP does not hoist them: every section above
+// this point has to run on a site where Polylang is genuinely absent.
+if ( true ) {
+	function pll_current_language( $f = '' ) { return 'it'; }
+	function pll_default_language( $f = '' ) { return 'en'; }
+	function pll_get_post_language( $id, $f = '' ) { return 99 === $id ? 'nl' : false; }
+	function pll_languages_list( $a = array() ) {
+		return ( isset( $a['fields'] ) && 'locale' === $a['fields'] )
+			? array( 'en_US', 'it_IT', 'nl_NL' )
+			: array( 'en', 'it', 'nl' );
+	}
+}
+
+section( 'Language: Polylang' );
+lang_reset();
+check( "current is Polylang's", Language::current(), 'it' );
+check( 'a post answers for itself', Language::for_post( 99 ), 'nl' );
+check( 'an untranslated post falls back', Language::for_post( 100 ), 'it' );
+check( 'default language', Language::default_language(), 'en' );
+check( 'available languages', Language::available(), array( 'en', 'it', 'nl' ) );
+check( 'source says polylang', Language::source(), 'polylang' );
+check( 'polylang code resolves too', Language::locale_for( 'it' ), 'it_IT' );
+
+section( 'Language: WPML wins when both are somehow present' );
+lang_reset();
+add_filter( 'wpml_current_language', function () { return 'de'; } );
+check( 'wpml takes precedence', Language::current(), 'de' );
+check( 'and is named as the source', Language::source(), 'wpml' );
+
 echo "\n$pass passed, $fail failed\n";
 exit( $fail > 0 ? 1 : 0 );
+
