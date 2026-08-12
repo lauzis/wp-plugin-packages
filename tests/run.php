@@ -417,6 +417,31 @@ check( 'component section is last', $s->sections()[2]['id'], 'demo_logging' );
 check( 'component section keeps the package domain', $s->sections()[2]['domain'], 'wp-plugin-packages' );
 check( 'component field lands on the plugin key', $s->key( 'logs_enabled' ), 'demo_logs_enabled' );
 
+echo "settings — a fragment can add to a section already registered\n";
+// The log viewer is the case: a plugin puts a panel of its own beside the
+// logging checkbox this package declares. Appending gave two tabs both called
+// Logging, one with a checkbox and one with a panel.
+$before = count( $s->sections() );
+$fields = count( $s->sections()[2]['fields'] );
+
+file_put_contents(
+	sys_get_temp_dir() . '/wp-packages-extra.json',
+	json_encode( array( 'sections' => array( array(
+		'id'     => 'logging',
+		'title'  => 'Ignored',
+		'fields' => array( array( 'id' => 'logs_view', 'type' => 'html', 'html' => '<p>panel</p>' ) ),
+	) ) ) )
+);
+
+$s->register( sys_get_temp_dir() . '/wp-packages-extra.json', array( 'prefix' => 'demo_', 'domain' => 'demo' ) );
+
+check( 'no second section appears', count( $s->sections() ), $before );
+check( 'its field joins the existing one', count( $s->sections()[2]['fields'] ), $fields + 1 );
+check( 'the field is the one added', $s->sections()[2]['fields'][ $fields ]['id'], 'demo_logs_view' );
+check( 'the section keeps the title it was declared with', $s->sections()[2]['title'], 'Logging' );
+
+unlink( sys_get_temp_dir() . '/wp-packages-extra.json' );
+
 $s->render();
 $c = \Carbon_Fields\Container::$last;
 
