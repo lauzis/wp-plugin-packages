@@ -109,6 +109,11 @@ class Logger {
 		return $this->dir;
 	}
 
+	/** The sanitized plugin slug this logger writes under. */
+	public function slug() {
+		return $this->slug;
+	}
+
 	/**
 	 * Appends an entry to today's log file, if logging is enabled.
 	 *
@@ -165,14 +170,23 @@ class Logger {
 	 * screen can tell the user whether the URL actually works — a fire-and-forget
 	 * post cannot.
 	 *
+	 * @param string $url Webhook to test instead of the configured one. The
+	 *                    settings screen passes what is in the field, which is
+	 *                    the URL somebody just pasted and has not saved yet —
+	 *                    testing the stored value there would answer a question
+	 *                    nobody asked. Non-https values are ignored, as ever.
 	 * @return true|string True on success, otherwise the reason it failed.
 	 */
-	public function slackTest() {
+	public function slackTest( $url = '' ) {
 		if ( ! function_exists( 'wp_remote_post' ) ) {
 			return 'The WordPress HTTP API is not available.';
 		}
 
-		$url = $this->slackWebhook();
+		$url = $this->httpsOnly( $url );
+
+		if ( '' === $url ) {
+			$url = $this->slackWebhook();
+		}
 
 		if ( '' === $url ) {
 			return __( 'No Slack webhook URL is configured.', 'wp-plugin-packages' );
@@ -499,6 +513,16 @@ class Logger {
 			$value = call_user_func( $value );
 		}
 
+		return $this->httpsOnly( $value );
+	}
+
+	/**
+	 * A webhook URL, or '' when it is not one this component will post to.
+	 *
+	 * @param mixed $value
+	 * @return string
+	 */
+	private function httpsOnly( $value ) {
 		$value = trim( (string) $value );
 
 		return 0 === strpos( $value, 'https://' ) ? $value : '';
