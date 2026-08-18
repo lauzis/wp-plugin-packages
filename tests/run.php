@@ -237,6 +237,124 @@ $defaulted = WpPackages_Registry::logger( 'defaulted', array( 'enabled' => true 
 check( 'dir defaults to uploads/{slug}-logs/', $defaulted->dir(), $base . '/uploads/defaulted-logs/' );
 
 
+// ------------------------------------------------------------------- Slack --
+echo "slack\n";
+$GLOBALS['http']           = array();
+$GLOBALS['http_responses'] = array();
+$hook                      = 'https://hooks.slack.test/services/T/B/xxx';
+
+/** Queues enough canned 200s that a fire-and-forget post never looks like a failure. */
+$canned = function ( $n = 5 ) {
+	$GLOBALS['http_responses'] = array_fill( 0, $n, array( 'code' => 200, 'body' => 'ok' ) );
+	$GLOBALS['http']           = array();
+};
+
+$quiet = WpPackages_Registry::logger( 'quiet', array( 'enabled' => true ) );
+$canned();
+$quiet->add( 'a', 'no webhook configured' );
+$quiet->error( 'a', 'no webhook configured' );
+check( 'nothing is posted without a webhook', count( $GLOBALS['http'] ), 0 );
+
+$errs = WpPackages_Registry::logger( 'errs', array( 'enabled' => true, 'slack_webhook' => $hook ) );
+$canned();
+$errs->add( 'cron', 'routine entry' );
+check( 'the default level keeps ordinary entries off Slack', count( $GLOBALS['http'] ), 0 );
+
+$errs->error( 'send', 'it broke', array( 'code' => 500 ) );
+check( 'an error is posted', count( $GLOBALS['http'] ), 1 );
+check( 'posted to the configured webhook', $GLOBALS['http'][0]['url'], $hook );
+check( 'the post is non-blocking', $GLOBALS['http'][0]['args']['blocking'], false );
+
+$body = json_decode( $GLOBALS['http'][0]['args']['body'], true );
+check( 'the message names the plugin', (bool) strpos( $body['text'], '*errs*' ), true );
+check( 'the message names the channel', (bool) strpos( $body['text'], '`errs`' ), true );
+check( 'the message carries the log line', (bool) strpos( $body['text'], '[send] it broke | {"code":500}' ), true );
+check( 'the line sits in a code block', (bool) preg_match( '/```.*```$/s', $body['text'] ), true );
+
+$all = WpPackages_Registry::logger( 'all', array( 'enabled' => true, 'slack_webhook' => $hook, 'slack_level' => 'all' ) );
+$canned();
+$all->add( 'cron', 'routine entry', array(), 'audit' );
+check( 'level "all" posts ordinary entries', count( $GLOBALS['http'] ), 1 );
+check(
+	'the alternate channel is named',
+	(bool) strpos( json_decode( $GLOBALS['http'][0]['args']['body'], true )['text'], '`audit`' ),
+	true
+);
+
+$off = false;
+$disabled = WpPackages_Registry::logger( 'offlog', array(
+	'enabled'       => function () use ( &$off ) { return $off; },
+	'slack_webhook' => $hook,
+	'slack_level'   => 'all',
+) );
+$canned();
+$disabled->add( 'cron', 'never recorded' );
+check( 'an entry logging drops is not posted either', count( $GLOBALS['http'] ), 0 );
+$disabled->error( 'send', 'still an error' );
+check( 'an error is posted even with logging off', count( $GLOBALS['http'] ), 1 );
+
+$plain = WpPackages_Registry::logger( 'plainhttp', array( 'enabled' => true, 'slack_webhook' => 'http://hooks.slack.test/services/T/B/x' ) );
+$canned();
+$plain->error( 'send', 'over http' );
+check( 'a non-https webhook is ignored', count( $GLOBALS['http'] ), 0 );
+
+$fence = WpPackages_Registry::logger( 'fence', array( 'enabled' => true, 'slack_webhook' => $hook, 'slack_level' => 'all' ) );
+$canned();
+$fence->add( 'x', 'ends with ``` a fence' );
+check(
+	'a backtick fence in the line cannot break the code block',
+	substr_count( json_decode( $GLOBALS['http'][0]['args']['body'], true )['text'], '```' ),
+	2
+);
+
+$long = WpPackages_Registry::logger( 'longline', array( 'enabled' => true, 'slack_webhook' => $hook, 'slack_level' => 'all' ) );
+$canned();
+$long->add( 'x', str_repeat( 'y', 9000 ) );
+check(
+	'an oversized line is truncated',
+	(bool) strpos( json_decode( $GLOBALS['http'][0]['args']['body'], true )['text'], '[...]```' ),
+	true
+);
+
+// --------------------------------------------------------- reading settings --
+$fromsettings = WpPackages_Registry::settings( 'slackset', array( 'title' => 'Slackset' ) );
+$fromsettings->register(
+	dirname( __DIR__ ) . '/settings/logs.json',
+	array( 'prefix' => 'slackset_', 'domain' => 'wp-plugin-packages' )
+);
+$GLOBALS['options']['_slackset_logs_enabled'] = '1';
+$slackset = WpPackages_Registry::logger( 'slackset' );
+
+$canned();
+$slackset->add( 'cron', 'nothing configured yet' );
+check( 'no webhook in settings posts nothing', count( $GLOBALS['http'] ), 0 );
+
+$GLOBALS['options']['_slackset_logs_slack_webhook'] = $hook;
+$canned();
+$slackset->add( 'cron', 'still errors-only' );
+check( 'the level defaults to errors when unset', count( $GLOBALS['http'] ), 0 );
+$slackset->error( 'send', 'from settings' );
+check( 'the webhook is read from the settings page', count( $GLOBALS['http'] ), 1 );
+
+$GLOBALS['options']['_slackset_logs_slack_level'] = 'all';
+$canned();
+$slackset->add( 'cron', 'now everything' );
+check( 'a level change applies without rebuilding the logger', count( $GLOBALS['http'] ), 1 );
+
+// ----------------------------------------------------------------- testing --
+$canned( 0 );
+$GLOBALS['http_responses'] = array( array( 'code' => 200, 'body' => 'ok' ) );
+check( 'slackTest() reports success', $errs->slackTest(), true );
+check( 'slackTest() waits for the answer', $GLOBALS['http'][0]['args']['blocking'], true );
+
+$GLOBALS['http_responses'] = array( array( 'code' => 404, 'body' => 'no_service' ) );
+check( 'slackTest() reports Slack\'s complaint', $errs->slackTest(), 'Slack answered 404: no_service' );
+
+check( 'slackTest() without a webhook explains itself', $quiet->slackTest(), 'No Slack webhook URL is configured.' );
+
+$GLOBALS['http_responses'] = array();
+
+
 // ======================================================== Notices component ==
 $always = function () { return true; };
 $n      = WpPackages_Registry::notices( 'splecheh', array( 'screen' => $always ) );
@@ -417,6 +535,31 @@ check( 'component section is last', $s->sections()[2]['id'], 'demo_logging' );
 check( 'component section keeps the package domain', $s->sections()[2]['domain'], 'wp-plugin-packages' );
 check( 'component field lands on the plugin key', $s->key( 'logs_enabled' ), 'demo_logs_enabled' );
 
+echo "settings — a fragment can add to a section already registered\n";
+// The log viewer is the case: a plugin puts a panel of its own beside the
+// logging checkbox this package declares. Appending gave two tabs both called
+// Logging, one with a checkbox and one with a panel.
+$before = count( $s->sections() );
+$fields = count( $s->sections()[2]['fields'] );
+
+file_put_contents(
+	sys_get_temp_dir() . '/wp-packages-extra.json',
+	json_encode( array( 'sections' => array( array(
+		'id'     => 'logging',
+		'title'  => 'Ignored',
+		'fields' => array( array( 'id' => 'logs_view', 'type' => 'html', 'html' => '<p>panel</p>' ) ),
+	) ) ) )
+);
+
+$s->register( sys_get_temp_dir() . '/wp-packages-extra.json', array( 'prefix' => 'demo_', 'domain' => 'demo' ) );
+
+check( 'no second section appears', count( $s->sections() ), $before );
+check( 'its field joins the existing one', count( $s->sections()[2]['fields'] ), $fields + 1 );
+check( 'the field is the one added', $s->sections()[2]['fields'][ $fields ]['id'], 'demo_logs_view' );
+check( 'the section keeps the title it was declared with', $s->sections()[2]['title'], 'Logging' );
+
+unlink( sys_get_temp_dir() . '/wp-packages-extra.json' );
+
 $s->render();
 $c = \Carbon_Fields\Container::$last;
 
@@ -537,6 +680,21 @@ $GLOBALS['options']['_early_logs_enabled'] = '';
 check( 'a stored empty value beats the default', WpPackages_Registry::logger( 'early' )->isEnabled(), false );
 unset( $GLOBALS['options']['_early_logs_enabled'] );
 check( 'an absent option still falls back', WpPackages_Registry::logger( 'early' )->isEnabled(), true );
+
+// A logger asking for a setting must not be what brings the settings page into
+// being: the registry caches that page, and the plugin's own title and parent
+// menu — passed later, on carbon_fields_register_fields — would be dropped.
+$GLOBALS['options']['_untouched_logs_enabled'] = '1';
+WpPackages_Registry::logger( 'untouched', array( 'slack_webhook' => null ) )->add( 'x', 'y' );
+check( 'a logger does not build the settings page', Lauzis\WpPackages\Settings\Settings::existing( 'untouched' ), null );
+$late = WpPackages_Registry::settings( 'untouched', array( 'title' => 'Late Settings' ) );
+$late->register(
+    dirname( __DIR__ ) . '/settings/logs.json',
+    array( 'prefix' => 'untouched_', 'domain' => 'wp-plugin-packages' )
+);
+$late->render();
+check( 'so the page the plugin builds later is its own', \Carbon_Fields\Container::$last->title, 'Late Settings' );
+check( 'and the logger reads through it once it exists', WpPackages_Registry::logger( 'untouched' )->isEnabled(), true );
 
 // =========================================================== Llm component ==
 echo "llm — JSON extraction\n";

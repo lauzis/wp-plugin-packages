@@ -39,6 +39,16 @@ class Settings {
 	private $rendered = false;
 
 	/**
+	 * @var array<string, self> Every page built so far, by slug.
+	 *
+	 * Lets a component find the page for its plugin without building one.
+	 * Asking the registry would construct a page instead of returning nothing,
+	 * and that page — created before the plugin passes its own title, parent and
+	 * mode — is the one the registry then caches and hands back to the plugin.
+	 */
+	private static $pages = array();
+
+	/**
 	 * @param string $slug   Plugin slug.
 	 * @param array  $config {
 	 *     @type string $title       Settings page title.
@@ -56,6 +66,21 @@ class Settings {
 			$config,
 			array_flip( array( 'page_parent', 'page_file', 'page_menu_title' ) )
 		);
+
+		self::$pages[ $slug ] = $this;
+	}
+
+	/**
+	 * The page already built for a slug, or null if there is none yet.
+	 *
+	 * For components that want to read one of their own settings without
+	 * forcing a page into existence — see Logs\Logger.
+	 *
+	 * @param string $slug
+	 * @return self|null
+	 */
+	public static function existing( $slug ) {
+		return isset( self::$pages[ $slug ] ) ? self::$pages[ $slug ] : null;
 	}
 
 	/**
@@ -69,6 +94,35 @@ class Settings {
 	 * }
 	 * @return $this
 	 */
+	/**
+	 * Adds a section, or folds it into one already registered under that id.
+	 *
+	 * Appending unconditionally gave two tabs with the same name the moment a
+	 * plugin wanted to put something of its own next to a section this package
+	 * defines — the log viewer beside the logging checkbox being the case that
+	 * found it. Merging by id is what a caller means by reusing the id.
+	 *
+	 * The first registration keeps its title and description: whoever declared
+	 * the section named it, and a later fragment is adding to it rather than
+	 * renaming it.
+	 *
+	 * @param array $section Normalised section.
+	 */
+	private function addSection( array $section ) {
+		foreach ( $this->sections as $index => $existing ) {
+			if ( $existing['id'] === $section['id'] ) {
+				$this->sections[ $index ]['fields'] = array_merge(
+					$existing['fields'],
+					$section['fields']
+				);
+
+				return;
+			}
+		}
+
+		$this->sections[] = $section;
+	}
+
 	public function register( $file, array $args = array() ) {
 		$sections = Schema::load( $file, $args );
 
@@ -86,7 +140,9 @@ class Settings {
 			}
 		}
 
-		$this->sections = array_merge( $this->sections, $sections );
+		foreach ( $sections as $section ) {
+			$this->addSection( $section );
+		}
 
 		return $this;
 	}
