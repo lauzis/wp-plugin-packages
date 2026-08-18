@@ -43,6 +43,9 @@ class WpPackages_Registry {
 	/** @var bool */
 	private static $booted = false;
 
+	/** @var string|null Version actually required, which is not always the highest. */
+	private static $loaded = null;
+
 	/** @var bool Whether the deferred boot has been scheduled. */
 	private static $hooked = false;
 
@@ -61,13 +64,32 @@ class WpPackages_Registry {
 		self::$copies[ $version ] = $path;
 		self::$roots[ $version ]  = $root;
 
-		// Arbitration is only correct once every active plugin has registered,
-		// which is not until all plugin files have run. Booting on first use
-		// instead would lock in whichever copy happened to be asked first --
-		// exactly the outcome this class exists to prevent.
-		if ( self::$hooked || self::$booted ) {
+		if ( self::$booted ) {
+			// Arbitration already happened and PHP cannot unload the classes it
+			// chose. Saying so is all that is left, and it is worth saying: the
+			// symptom otherwise is a plugin calling a method that exists in the
+			// version it ships and not in the one that is running.
+			if ( null !== self::$loaded && version_compare( $version, self::$loaded, '>' ) ) {
+				error_log(
+					'wp-plugin-packages: ' . $version . ' registered after ' . self::$loaded
+					. ' was already loaded, so ' . self::$loaded . ' is what runs this request.'
+					. ' Something called the library before plugins_loaded — logging during a'
+					. ' plugin bootstrap is the usual cause.'
+				);
+			}
+
 			return;
 		}
+
+		if ( self::$hooked ) {
+			return;
+		}
+
+		// Arbitration is only correct once every active plugin has registered,
+		// which is not until all plugin files have run. Booting on first use
+		// locks in whichever copy happened to be asked first -- exactly the
+		// outcome this class exists to prevent, which is why the deferred boot
+		// below is the intended path and an early one is worth reporting.
 
 		if ( function_exists( 'add_action' ) && function_exists( 'did_action' ) && ! did_action( 'plugins_loaded' ) ) {
 			self::$hooked = true;
@@ -83,8 +105,9 @@ class WpPackages_Registry {
 		}
 
 		self::$booted = true;
+		self::$loaded = self::active_version();
 
-		require_once self::$copies[ self::active_version() ];
+		require_once self::$copies[ self::$loaded ];
 	}
 
 	/**
@@ -201,6 +224,23 @@ class WpPackages_Registry {
 	 *
 	 * @return string|null
 	 */
+	/**
+	 * The version whose code is actually loaded, or null before boot.
+	 *
+	 * Not always the highest one installed: boot() runs on first use, so a
+	 * plugin that reaches the library before plugins_loaded locks arbitration
+	 * in early and a newer copy registering afterwards is counted by
+	 * active_version() without ever being loaded. Diagnostics want this one.
+	 *
+	 * Callers must guard with method_exists(): an older copy may be the one
+	 * that defined this class, and it does not have this method.
+	 *
+	 * @return string|null
+	 */
+	public static function loaded_version() {
+		return self::$loaded;
+	}
+
 	public static function active_version() {
 		if ( empty( self::$copies ) ) {
 			return null;
@@ -218,7 +258,10 @@ class WpPackages_Registry {
 	 * @return string|null
 	 */
 	public static function active_root() {
-		$version = self::active_version();
+		// The loaded copy, not the highest one: after an early boot they differ,
+		// and a root pointing at code that is not running would hand out a
+		// schema and stylesheets the loaded classes never render.
+		$version = null !== self::$loaded ? self::$loaded : self::active_version();
 
 		return null === $version ? null : self::$roots[ $version ];
 	}

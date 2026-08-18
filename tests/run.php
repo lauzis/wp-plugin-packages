@@ -1029,7 +1029,13 @@ $newer = preg_replace_callback(
 
 WpPackages_Registry::register( $newer, dirname( __DIR__ ) . '/src/load.php', '/newer' );
 check( 'version compare is semantic, not lexical', WpPackages_Registry::active_version(), $newer );
-check( 'assets follow the winning copy', WpPackages_Registry::active_root(), '/newer' );
+
+// The library booted long before this line ran, and PHP cannot unload the
+// classes it already chose. A root pointing at the copy that merely registered
+// would hand out a schema and stylesheets the loaded classes never render, so
+// both of these follow what is actually running.
+check( 'the loaded version is reported apart from the highest', WpPackages_Registry::loaded_version(), $boot_version );
+check( 'assets follow the copy actually loaded', WpPackages_Registry::active_root(), dirname( __DIR__ ) );
 
 exec( 'rm -rf ' . escapeshellarg( $base ) );
 
