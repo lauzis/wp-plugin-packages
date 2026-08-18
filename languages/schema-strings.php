@@ -12,6 +12,7 @@
 
 return;
 
+__( '@callback:logs_slack_test', 'wp-plugin-packages' );
 __( 'AI Provider', 'wp-plugin-packages' );
 __( 'API token for the selected provider. Not needed, and not stored, for the commandline provider.', 'wp-plugin-packages' );
 __( 'Access Key', 'wp-plugin-packages' );
@@ -29,7 +30,7 @@ __( 'How long a single call may take before it is killed. The server\'s own limi
 __( 'How the request is made. The commandline option keeps API keys out of WordPress: the script owns its own credentials.', 'wp-plugin-packages' );
 __( 'Logging', 'wp-plugin-packages' );
 __( 'OpenAI', 'wp-plugin-packages' );
-__( 'Optional: an incoming webhook URL (https://hooks.slack.com/services/...) that log entries are also posted to. Leave empty to send nothing to Slack. Anyone holding this URL can post to the channel, so treat it as a credential.', 'wp-plugin-packages' );
+__( 'Optional: an incoming webhook URL (https://hooks.slack.com/services/...) that log entries are also posted to. Leave empty to send nothing to Slack. Anyone holding this URL can post to the channel, so treat it as a credential. The test button posts to whatever is in this field, saved or not.', 'wp-plugin-packages' );
 __( 'Optional: override the default API endpoint for the selected provider.', 'wp-plugin-packages' );
 __( 'Provider', 'wp-plugin-packages' );
 __( 'Records plugin actions to daily log files in the uploads directory. Useful when diagnosing a problem; leave it off otherwise.', 'wp-plugin-packages' );

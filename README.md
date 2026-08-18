@@ -5,7 +5,7 @@ splecheh, rest-in-sync, and any that follow).
 
 | Component | What it does |
 | --- | --- |
-| **Logs** | File-based logging, daily files, channels. |
+| **Logs** | File-based logging, daily files, channels, and an optional Slack webhook. |
 | **Notices** | Dismissible admin notices, with the dismissal stored site-wide or per user. |
 | **Toasts** | Transient floating messages raised from JavaScript. |
 | **Settings** | A settings page composed from JSON schema fragments, rendered by Carbon Fields. |
@@ -85,7 +85,8 @@ being captured when the logger is first built.
 | `read($channel, $limit)` | Entries, newest first. |
 | `clear($channel)` | Deletes one channel's files; `'*'` for all. |
 | `dir()` | Absolute log directory path. |
-| `slackTest()` | Posts a test message to the Slack webhook and waits: `true`, or the reason it failed. |
+| `slackTest( $url = '' )` | Posts a test message and waits: `true`, or the reason it failed. `$url` overrides the configured webhook. |
+| `slug()` | The sanitized plugin slug the logger writes under. |
 
 Lines are `[2026-08-01 09:14:02] [action] message | {"json":"context"}`. An
 empty `$action` omits that segment, for audit-style streams carrying only a
@@ -115,9 +116,33 @@ written to file:
 
 Posts are **fire-and-forget** (`blocking => false`), so a log call never makes
 the page wait on Slack. The cost is that a webhook Slack rejects fails quietly —
-`slackTest()` posts a test message and *does* wait, returning `true` or the
-reason it failed, for a settings screen to report. Only `https://` URLs are
-used: the webhook URL is itself the credential.
+which is what the test button is for. Only `https://` URLs are used: the webhook
+URL is itself the credential.
+
+### The test button
+
+The schema declares a `logs_slack_test` html field rendered from
+`"@callback:logs_slack_test"`, so a plugin gets the button by registering that
+callback and booting the component:
+
+```php
+$tester = new \Lauzis\WpPackages\Logs\SlackTester( $logger );
+$tester->boot();                                        // on every admin request
+
+$settings->callback( 'logs_slack_test', array( $tester, 'render' ) );
+```
+
+`boot()` registers `wp_ajax_{slug}_slack_test` and is idempotent; `render()`
+draws the button. Register neither and no button appears — an unregistered
+callback resolves to nothing rather than failing.
+
+The button posts **whatever is in the webhook field**, saved or not: pasting a
+URL and pressing Test before saving is the obvious thing to do, and testing the
+stored value there would answer a question nobody asked. The request carries a
+nonce and requires `manage_options` (`capability` in the config changes it).
+Underneath it is `slackTest( $url = '' )`, which posts a test message and
+*does* wait, returning `true` or the reason it failed — usable on its own from a
+plugin's self-test page.
 
 `Every log entry` means one HTTP request per entry and Slack rate-limits a
 webhook to roughly one message per second, so it belongs on a quiet site or a

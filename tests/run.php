@@ -43,6 +43,7 @@ function current_user_can( $c ) { return $GLOBALS['caps']; }
 function esc_attr( $s ) { return htmlspecialchars( $s, ENT_QUOTES, 'UTF-8' ); }
 function esc_html( $s ) { return htmlspecialchars( $s, ENT_QUOTES, 'UTF-8' ); }
 function esc_html__( $s, $d = 'default' ) { return htmlspecialchars( $s, ENT_QUOTES, 'UTF-8' ); }
+function esc_attr__( $s, $d = 'default' ) { return htmlspecialchars( $s, ENT_QUOTES, 'UTF-8' ); }
 function __( $s, $d = 'default' ) { $GLOBALS['translated'][] = array( $s, $d ); return $s; }
 // Approximates wp_kses_post()'s allow-list: block and inline markup through, scripts out.
 function wp_kses_post( $s ) { return strip_tags( $s, '<a><strong><em><code><br><p><ul><ol><li><span><h2><h3>' ); }
@@ -315,6 +316,64 @@ check(
 	(bool) strpos( json_decode( $GLOBALS['http'][0]['args']['body'], true )['text'], '[...]```' ),
 	true
 );
+
+// ------------------------------------------------------- the test button --
+echo "slack test button\n";
+$tester = new Lauzis\WpPackages\Logs\SlackTester( $errs );
+
+check( 'the action is namespaced per plugin', $tester->action(), 'errs_slack_test' );
+
+$markup = $tester->render();
+check( 'renders a non-submit button', (bool) strpos( $markup, 'type="button"' ), true );
+check( 'carries its action', (bool) strpos( $markup, 'data-wp-packages-slack-test="errs_slack_test"' ), true );
+check( 'carries a nonce', (bool) strpos( $markup, 'data-nonce="nonce-errs_slack_test"' ), true );
+check( 'renders no form of its own', strpos( $markup, '<form' ), false );
+
+$tester->boot();
+check( 'boot() registers the endpoint', isset( $GLOBALS['hooks']['wp_ajax_errs_slack_test'] ), true );
+$before = count( $GLOBALS['hooks']['wp_ajax_errs_slack_test'] );
+$tester->boot();
+check( 'boot() is idempotent', count( $GLOBALS['hooks']['wp_ajax_errs_slack_test'] ), $before );
+
+/** Runs the handler, returning what it sent back rather than ending the request. */
+$answer = function ( $tester ) {
+	try {
+		$tester->handle();
+	} catch ( WpJsonHalt $halt ) {
+		return $halt->getMessage();
+	}
+
+	return '(no answer)';
+};
+
+$canned( 0 );
+$GLOBALS['http_responses'] = array( array( 'code' => 200, 'body' => 'ok' ) );
+$_POST = array( 'nonce' => 'nonce-errs_slack_test', 'url' => 'https://hooks.slack.test/services/pasted' );
+check( 'a passing test reports success', $answer( $tester ), 'success' );
+check( 'it posts to the URL in the field, not the stored one', $GLOBALS['http'][0]['url'], 'https://hooks.slack.test/services/pasted' );
+check( 'and waits for the answer', $GLOBALS['http'][0]['args']['blocking'], true );
+
+$canned( 0 );
+$GLOBALS['http_responses'] = array( array( 'code' => 403, 'body' => 'invalid_token' ) );
+check( 'a rejected webhook reports why', $answer( $tester ), 'Slack answered 403: invalid_token' );
+
+$canned( 0 );
+$GLOBALS['http_responses'] = array( array( 'code' => 200, 'body' => 'ok' ) );
+$_POST['url'] = 'http://hooks.slack.test/services/plain';
+check( 'a non-https field value falls back to the configured webhook', $answer( $tester ), 'success' );
+check( 'which is the one posted to', $GLOBALS['http'][0]['url'], $hook );
+
+$canned( 0 );
+$GLOBALS['http_responses'] = array( array( 'code' => 200, 'body' => 'ok' ) );
+$_POST['url'] = '';
+check( 'an empty field tests the configured webhook', $answer( $tester ), 'success' );
+
+$GLOBALS['caps'] = false;
+check( 'a user without the capability is refused', $answer( $tester ), 'You are not allowed to do that.' );
+$GLOBALS['caps'] = true;
+
+$_POST = array();
+$GLOBALS['http_responses'] = array();
 
 // --------------------------------------------------------- reading settings --
 $fromsettings = WpPackages_Registry::settings( 'slackset', array( 'title' => 'Slackset' ) );
