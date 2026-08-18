@@ -31,6 +31,15 @@ class Logger {
 	/** @var string */
 	private $default_channel;
 
+	/** @var callable|string|null */
+	private $slack_webhook;
+
+	/** @var callable|string|null */
+	private $slack_level;
+
+	/** @var bool Guards against a Slack failure logging its way back in here. */
+	private $slack_sending = false;
+
 	/**
 	 * @param string $slug   Plugin slug.
 	 * @param array  $config {
@@ -46,6 +55,13 @@ class Logger {
 	 *                                   during bootstrap or cron, earlier than
 	 *                                   carbon_fields_register_fields. Default false.
 	 *     @type string        $channel  Default channel name. Defaults to $slug.
+	 *     @type callable|string $slack_webhook Incoming-webhook URL entries are
+	 *                                   mirrored to. A callable is resolved per
+	 *                                   call. Omit it and the component reads its
+	 *                                   own 'logs_slack_webhook' setting.
+	 *     @type callable|string $slack_level 'errors' (default) or 'all'. Omit it
+	 *                                   and the component reads its own
+	 *                                   'logs_slack_level' setting.
 	 * }
 	 */
 	public function __construct( $slug, array $config = array() ) {
@@ -53,6 +69,8 @@ class Logger {
 		$this->enabled         = isset( $config['enabled'] ) ? $config['enabled'] : null;
 		$this->enabled_default = ! empty( $config['enabled_default'] );
 		$this->default_channel = isset( $config['channel'] ) ? $this->sanitize_channel( $config['channel'] ) : $this->slug;
+		$this->slack_webhook   = isset( $config['slack_webhook'] ) ? $config['slack_webhook'] : null;
+		$this->slack_level     = isset( $config['slack_level'] ) ? $config['slack_level'] : null;
 
 		if ( isset( $config['dir'] ) ) {
 			$this->dir = rtrim( str_replace( '\\', '/', $config['dir'] ), '/' ) . '/';
@@ -69,15 +87,18 @@ class Logger {
 	 * field from its own schema, so a plugin that registers settings/logs.json
 	 * does not have to wire the setting through by hand. The bare id is used,
 	 * so this still works for a plugin that mapped the field onto a legacy
-	 * option key.
+	 * option key. Before that page exists the answer is 'enabled_default' — see
+	 * settings().
 	 */
 	public function isEnabled() {
 		if ( null === $this->enabled ) {
-			if ( ! class_exists( 'WpPackages_Registry' ) ) {
-				return false;
+			$settings = $this->settings();
+
+			if ( ! $settings ) {
+				return (bool) $this->enabled_default;
 			}
 
-			return (bool) \WpPackages_Registry::settings( $this->slug )->get( 'logs_enabled', $this->enabled_default );
+			return (bool) $settings->get( 'logs_enabled', $this->enabled_default );
 		}
 
 		return is_callable( $this->enabled ) ? (bool) call_user_func( $this->enabled ) : (bool) $this->enabled;
@@ -91,6 +112,10 @@ class Logger {
 	/**
 	 * Appends an entry to today's log file, if logging is enabled.
 	 *
+	 * Mirrored to Slack when a webhook is configured and its level is 'all'.
+	 * Slack only ever sees what was actually recorded, so an entry dropped
+	 * because logging is off is not posted either.
+	 *
 	 * @param string      $action  Short label.
 	 * @param string      $message Human-readable message.
 	 * @param array       $context Key-value context, appended as JSON.
@@ -102,12 +127,18 @@ class Logger {
 			return false;
 		}
 
-		return $this->write( $this->format( $action, $message, $context ), $channel );
+		$line    = $this->format( $action, $message, $context );
+		$written = $this->write( $line, $channel );
+
+		$this->slack( $line, $channel, false );
+
+		return $written;
 	}
 
 	/**
-	 * Logs a failure unconditionally: always to PHP's error_log, and to the
-	 * plugin's own file as well when logging is enabled.
+	 * Logs a failure unconditionally: always to PHP's error_log, to Slack when a
+	 * webhook is configured, and to the plugin's own file as well when logging
+	 * is enabled.
 	 *
 	 * Use for failures that should never be silent.
 	 *
@@ -120,9 +151,48 @@ class Logger {
 
 		error_log( $this->slug . ': ' . $line );
 
+		$this->slack( $line, null, true );
+
 		if ( $this->isEnabled() ) {
 			$this->write( $line, null );
 		}
+	}
+
+	/**
+	 * Posts a test message to the configured Slack webhook.
+	 *
+	 * Unlike ordinary log traffic this waits for Slack's answer, so a settings
+	 * screen can tell the user whether the URL actually works — a fire-and-forget
+	 * post cannot.
+	 *
+	 * @return true|string True on success, otherwise the reason it failed.
+	 */
+	public function slackTest() {
+		if ( ! function_exists( 'wp_remote_post' ) ) {
+			return 'The WordPress HTTP API is not available.';
+		}
+
+		$url = $this->slackWebhook();
+
+		if ( '' === $url ) {
+			return __( 'No Slack webhook URL is configured.', 'wp-plugin-packages' );
+		}
+
+		$payload  = $this->payload( 'Test message from ' . $this->slug . '.', null, false );
+		$response = wp_remote_post( $url, $this->slack_request( $payload, true ) );
+
+		if ( is_wp_error( $response ) ) {
+			return $response->get_error_message();
+		}
+
+		$code = (int) wp_remote_retrieve_response_code( $response );
+
+		if ( 200 !== $code ) {
+			/* translators: 1: HTTP status code, 2: response body Slack returned. */
+			return sprintf( __( 'Slack answered %1$d: %2$s', 'wp-plugin-packages' ), $code, wp_remote_retrieve_body( $response ) );
+		}
+
+		return true;
 	}
 
 	/**
@@ -289,6 +359,172 @@ class Logger {
 		}
 
 		return true;
+	}
+
+	/**
+	 * Mirrors one log line to the configured Slack incoming webhook.
+	 *
+	 * Fire-and-forget: the request is non-blocking, because a log call must not
+	 * make the page wait on Slack, and because a page that logs repeatedly would
+	 * otherwise pay that latency each time. The trade-off is that a webhook Slack
+	 * rejects fails silently — slackTest() is the way to check one.
+	 *
+	 * @param string      $line     Formatted log line.
+	 * @param string|null $channel  Channel the line was written to.
+	 * @param bool        $is_error Whether this came from error().
+	 * @return bool Whether the request was made.
+	 */
+	private function slack( $line, $channel, $is_error ) {
+		// A failure below reports through error_log() directly rather than
+		// through error(), but a filter on the HTTP request could still log, and
+		// that log call would come straight back here.
+		if ( $this->slack_sending || ! function_exists( 'wp_remote_post' ) ) {
+			return false;
+		}
+
+		if ( ! $is_error && 'all' !== $this->slackLevel() ) {
+			return false;
+		}
+
+		$url = $this->slackWebhook();
+
+		if ( '' === $url ) {
+			return false;
+		}
+
+		$this->slack_sending = true;
+
+		$response = wp_remote_post( $url, $this->slack_request( $this->payload( $line, $channel, $is_error ), false ) );
+
+		$this->slack_sending = false;
+
+		if ( is_wp_error( $response ) ) {
+			error_log( $this->slug . ': Slack webhook failed: ' . $response->get_error_message() );
+
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Arguments for a webhook request.
+	 *
+	 * @param array $payload  Slack message payload.
+	 * @param bool  $blocking Whether to wait for the response.
+	 * @return array
+	 */
+	private function slack_request( array $payload, $blocking ) {
+		return array(
+			'headers'  => array( 'Content-Type' => 'application/json' ),
+			'body'     => wp_json_encode( $payload ),
+			'timeout'  => 10,
+			'blocking' => (bool) $blocking,
+		);
+	}
+
+	/**
+	 * Builds the Slack message for a log line.
+	 *
+	 * The line goes in a code block so the timestamp and the JSON context survive
+	 * intact. Slack offers no way to escape a fence inside one, so backticks in
+	 * the line are replaced rather than allowed to break the block.
+	 *
+	 * @param string      $line
+	 * @param string|null $channel
+	 * @param bool        $is_error
+	 * @return array
+	 */
+	private function payload( $line, $channel, $is_error ) {
+		$channel = $this->sanitize_channel( null === $channel ? $this->default_channel : $channel );
+		$site    = function_exists( 'get_bloginfo' ) ? (string) get_bloginfo( 'name' ) : '';
+
+		$heading = ( $is_error ? ':rotating_light: ' : ':memo: ' ) . '*' . $this->slug . '*'
+			. ( '' !== $site ? ' — ' . $site : '' ) . ' `' . $channel . '`';
+
+		// Slack rejects a message beyond roughly 40k characters, and a log line
+		// carrying a large context can get there. Truncated is more useful than
+		// refused. Cut on characters where mbstring allows it: half a multibyte
+		// character is not valid UTF-8, and json_encode() would refuse the lot.
+		if ( strlen( $line ) > 3000 ) {
+			$line = ( function_exists( 'mb_substr' ) ? mb_substr( $line, 0, 3000, 'UTF-8' ) : substr( $line, 0, 3000 ) ) . ' [...]';
+		}
+
+		return array(
+			'text'         => $heading . "\n```" . str_replace( '```', "'''", $line ) . '```',
+			'mrkdwn'       => true,
+			'unfurl_links' => false,
+		);
+	}
+
+	/**
+	 * The plugin's settings page, if it has been built.
+	 *
+	 * Deliberately does not go through WpPackages_Registry::settings(), which
+	 * would construct one: a page built here, before the plugin passes its own
+	 * title and parent menu, is the one the registry caches and later hands back
+	 * to the plugin, and its settings screen loses that configuration. Logging
+	 * happens during bootstrap and cron, long before a plugin registers its
+	 * page, so the logger must be able to find nothing and carry on.
+	 *
+	 * @return \Lauzis\WpPackages\Settings\Settings|null
+	 */
+	private function settings() {
+		return \Lauzis\WpPackages\Settings\Settings::existing( $this->slug );
+	}
+
+	/**
+	 * The webhook URL currently configured, or '' when there is none.
+	 *
+	 * With no explicit 'slack_webhook' config the component reads the
+	 * 'logs_slack_webhook' field from its own schema, exactly as isEnabled()
+	 * reads 'logs_enabled'. Anything that is not an https URL counts as unset:
+	 * the URL is itself the credential, and posting it over plain http would put
+	 * it on the wire in clear.
+	 *
+	 * @return string
+	 */
+	private function slackWebhook() {
+		$value = $this->slack_webhook;
+
+		if ( null === $value ) {
+			$settings = $this->settings();
+
+			if ( ! $settings ) {
+				return '';
+			}
+
+			$value = $settings->get( 'logs_slack_webhook', '' );
+		} elseif ( ! is_string( $value ) && is_callable( $value ) ) {
+			$value = call_user_func( $value );
+		}
+
+		$value = trim( (string) $value );
+
+		return 0 === strpos( $value, 'https://' ) ? $value : '';
+	}
+
+	/**
+	 * Which entries reach Slack: 'errors' (the default) or 'all'.
+	 *
+	 * @return string
+	 */
+	private function slackLevel() {
+		$value = $this->slack_level;
+
+		if ( null === $value ) {
+			$settings = $this->settings();
+
+			if ( ! $settings ) {
+				return 'errors';
+			}
+
+			$value = $settings->get( 'logs_slack_level', 'errors' );
+		} elseif ( ! is_string( $value ) && is_callable( $value ) ) {
+			$value = call_user_func( $value );
+		}
+
+		return 'all' === $value ? 'all' : 'errors';
 	}
 
 	/**

@@ -39,6 +39,16 @@ class Settings {
 	private $rendered = false;
 
 	/**
+	 * @var array<string, self> Every page built so far, by slug.
+	 *
+	 * Lets a component find the page for its plugin without building one.
+	 * Asking the registry would construct a page instead of returning nothing,
+	 * and that page — created before the plugin passes its own title, parent and
+	 * mode — is the one the registry then caches and hands back to the plugin.
+	 */
+	private static $pages = array();
+
+	/**
 	 * @param string $slug   Plugin slug.
 	 * @param array  $config {
 	 *     @type string $title       Settings page title.
@@ -56,6 +66,21 @@ class Settings {
 			$config,
 			array_flip( array( 'page_parent', 'page_file', 'page_menu_title' ) )
 		);
+
+		self::$pages[ $slug ] = $this;
+	}
+
+	/**
+	 * The page already built for a slug, or null if there is none yet.
+	 *
+	 * For components that want to read one of their own settings without
+	 * forcing a page into existence — see Logs\Logger.
+	 *
+	 * @param string $slug
+	 * @return self|null
+	 */
+	public static function existing( $slug ) {
+		return isset( self::$pages[ $slug ] ) ? self::$pages[ $slug ] : null;
 	}
 
 	/**

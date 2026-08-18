@@ -85,6 +85,7 @@ being captured when the logger is first built.
 | `read($channel, $limit)` | Entries, newest first. |
 | `clear($channel)` | Deletes one channel's files; `'*'` for all. |
 | `dir()` | Absolute log directory path. |
+| `slackTest()` | Posts a test message to the Slack webhook and waits: `true`, or the reason it failed. |
 
 Lines are `[2026-08-01 09:14:02] [action] message | {"json":"context"}`. An
 empty `$action` omits that segment, for audit-style streams carrying only a
@@ -98,6 +99,46 @@ to `[a-z0-9_-]`, so a caller-supplied channel cannot escape the directory.
 Logs belong under `uploads/`, never inside the plugin directory — WordPress
 deletes and re-extracts that folder on every update. The directory gets an
 `index.php` and a deny-all `.htaccess` on creation.
+
+### Slack
+
+Registering `WpPackages_Registry::schema( 'logs' )` also gives the settings page
+a **Slack webhook URL** field and a **Send to Slack** choice — `Errors only`
+(the default) or `Every log entry`. With a webhook set, entries are posted to a
+Slack [incoming webhook](https://api.slack.com/messaging/webhooks) as well as
+written to file:
+
+| | Goes to Slack |
+| --- | --- |
+| `error()` | Always, at either level — errors are never silent. |
+| `add()` | Only at `Every log entry`, and only when file logging is on: Slack sees what was actually recorded, never an entry the enabled check dropped. |
+
+Posts are **fire-and-forget** (`blocking => false`), so a log call never makes
+the page wait on Slack. The cost is that a webhook Slack rejects fails quietly —
+`slackTest()` posts a test message and *does* wait, returning `true` or the
+reason it failed, for a settings screen to report. Only `https://` URLs are
+used: the webhook URL is itself the credential.
+
+`Every log entry` means one HTTP request per entry and Slack rate-limits a
+webhook to roughly one message per second, so it belongs on a quiet site or a
+specific investigation, not on a busy one by default.
+
+The URL and the level can also be passed as config, which is what a plugin
+wanting Slack during bootstrap — before any settings page exists — should do:
+
+```php
+WpPackages_Registry::logger( 'my-plugin', array(
+    'slack_webhook' => MY_PLUGIN_SLACK_HOOK,   // or a callable
+    'slack_level'   => 'all',
+) );
+```
+
+Both settings, and `logs_enabled` itself, are read through the plugin's settings
+page **only once that page exists**. The logger never builds one: the registry
+caches the first page created for a slug, so a page built by a bootstrap-time
+log call would be the one the plugin gets back later, minus its own title and
+parent menu. Until the plugin registers its page, `enabled_default` stands and
+nothing goes to Slack.
 
 ## Notices
 
